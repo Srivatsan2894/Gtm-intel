@@ -45,16 +45,32 @@ export default function SetupPage() {
       localStorage.setItem('gtm_profile_id', data.profile.id)
       localStorage.setItem('gtm_profile', JSON.stringify(data.profile))
 
-      // Auto-discover and research companies
+      // Phase 1: discover company names only (fast)
       setLoadingMsg('Finding your best-fit accounts...')
-      await fetch('/api/discover', {
+      const discoverRes = await fetch('/api/discover', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ profile_id: data.profile.id }),
       })
+      const discoverData = await discoverRes.json()
+      const companies = discoverData.companies || []
+
+      // Phase 2: research each company individually
+      for (let i = 0; i < companies.length; i++) {
+        const c = companies[i]
+        if (c.status === 'existing') continue
+        setLoadingMsg(`Researching ${c.name} (${i + 1}/${companies.length})...`)
+        try {
+          await fetch('/api/research', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ company_name: c.name, profile_id: data.profile.id, prospect_id: c.prospect_id }),
+          })
+        } catch (e) { console.error(`Failed to research ${c.name}`, e) }
+      }
 
       setLoadingMsg('Ready! Taking you to your dashboard...')
-      await new Promise(r => setTimeout(r, 800))
+      await new Promise(r => setTimeout(r, 500))
       router.push('/dashboard')
     } catch (e) {
       console.error(e)
