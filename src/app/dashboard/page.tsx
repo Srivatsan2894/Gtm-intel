@@ -14,8 +14,13 @@ interface Signal {
   source_name: string; source_url: string; source_verified: boolean
   signal_date: string; is_new: boolean
 }
+interface GTMScoop {
+  type: string; headline: string; detail: string
+  why_it_matters: string; source: string; source_url: string; date: string
+}
 interface GTMBrief {
   executive_summary: string; business_model: string; gtm_motion: string
+  gtm_scoops: GTMScoop[]
   pain_points: Array<{title: string; description: string; severity: string}>
   tech_stack: Array<{category: string; tool: string; confidence: string}>
   buying_signals: Array<{signal: string; source: string; source_url: string}>
@@ -71,7 +76,7 @@ export default function Dashboard() {
   const [profile, setProfile] = useState<Profile|null>(null)
   const [prospects, setProspects] = useState<Prospect[]>([])
   const [selected, setSelected] = useState<Prospect|null>(null)
-  const [activeTab, setActiveTab] = useState<'brief'|'contacts'|'signals'|'outreach'>('brief')
+  const [activeTab, setActiveTab] = useState<'brief'|'contacts'|'signals'|'outreach'|'scoops'>('scoops')
   const [searchInput, setSearchInput] = useState('')
   const [researching, setResearching] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -374,7 +379,7 @@ export default function Dashboard() {
 
               {/* Tabs */}
               <div className="flex gap-1 mb-5 p-1 rounded-lg" style={{background:'#1a1a24'}}>
-                {(['brief','contacts','signals','outreach'] as const).map(tab => (
+                {(['scoops','brief','contacts','signals','outreach'] as const).map(tab => (
                   <button key={tab} onClick={()=>setActiveTab(tab)}
                     className="flex-1 py-2 rounded-md text-xs font-semibold capitalize transition-all"
                     style={{background:activeTab===tab?'#6c63ff':'transparent',color:activeTab===tab?'white':'#6b6b80'}}>
@@ -387,6 +392,55 @@ export default function Dashboard() {
                   </button>
                 ))}
               </div>
+
+              {/* SCOOPS TAB */}
+              {activeTab==='scoops' && (
+                <div className="space-y-3 animate-in">
+                  {brief?.gtm_scoops && brief.gtm_scoops.length > 0 ? brief.gtm_scoops.map((s: GTMScoop, i: number) => {
+                    const typeColors: Record<string,string> = {
+                      funding:'#16a34a',leadership_change:'#ea580c',hiring_spike:'#2563eb',
+                      expansion:'#0891b2',product_launch:'#9333ea',partnership:'#65a30d',
+                      tech_change:'#b45309',strategic:'#6c63ff',other:'#6b6b80'
+                    }
+                    const typeLabels: Record<string,string> = {
+                      funding:'💰 Funding',leadership_change:'👤 Leadership',hiring_spike:'🧑‍💼 Hiring Spike',
+                      expansion:'📈 Expansion',product_launch:'🚀 Product Launch',partnership:'🤝 Partnership',
+                      tech_change:'⚙️ Tech Change',strategic:'🎯 Strategic',other:'📌 Signal'
+                    }
+                    const color = typeColors[s.type] || '#6b6b80'
+                    return (
+                      <div key={i} className="rounded-xl overflow-hidden" style={{border:`1px solid ${color}30`}}>
+                        <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2"
+                          style={{background:`${color}10`,borderBottom:`1px solid ${color}20`}}>
+                          <div className="flex items-center gap-2">
+                            <Badge text={typeLabels[s.type]||s.type} color={color}/>
+                            {s.date && <span className="text-xs" style={{color:'#6b6b80'}}>{s.date}</span>}
+                          </div>
+                          {s.source_url && (
+                            <a href={s.source_url} target="_blank" rel="noreferrer"
+                              className="text-xs font-medium" style={{color:'#6c63ff'}}>{s.source} ↗</a>
+                          )}
+                        </div>
+                        <div className="p-4" style={{background:'#13131c'}}>
+                          <p className="text-sm font-bold text-white mb-2">{s.headline}</p>
+                          <p className="text-sm mb-3" style={{color:'#c0c0d4',lineHeight:'1.7'}}>{s.detail}</p>
+                          <div className="flex items-start gap-2 px-3 py-2 rounded-lg"
+                            style={{background:'#6c63ff10',border:'1px solid #6c63ff20'}}>
+                            <span className="text-xs flex-shrink-0" style={{color:'#6c63ff'}}>💡 Why it matters</span>
+                            <p className="text-xs" style={{color:'#a0a0c0'}}>{s.why_it_matters}</p>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  }) : (
+                    <div className="text-center py-8">
+                      <p className="text-2xl mb-3">📡</p>
+                      <p className="text-sm font-medium text-white mb-1">No scoops yet</p>
+                      <p className="text-xs" style={{color:'#6b6b80'}}>Run a refresh to pull latest signals for this account.</p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* BRIEF TAB */}
               {activeTab==='brief' && brief && (
@@ -455,21 +509,30 @@ export default function Dashboard() {
                         {c.role_in_deal && <Badge text={c.role_in_deal} color={ROLE_COLORS[c.role_in_deal]||'#6b6b80'}/>}
                       </div>
                       <div className="p-4 space-y-3" style={{background:'#13131c'}}>
-                        {/* LinkedIn */}
-                        <div className="flex items-center justify-between">
-                          <div className="min-w-0">
-                            <p className="text-xs font-mono uppercase tracking-wider mb-1" style={{color:'#6b6b80'}}>LinkedIn</p>
-                            {c.linkedin_url ? (
+                        {/* LinkedIn — only show if verified or medium confidence */}
+                        {c.linkedin_url && (
+                          <div className="flex items-center justify-between">
+                            <div className="min-w-0">
+                              <p className="text-xs font-mono uppercase tracking-wider mb-1" style={{color:'#6b6b80'}}>LinkedIn</p>
                               <a href={c.linkedin_url} target="_blank" rel="noreferrer"
                                 className="text-xs font-medium truncate block" style={{color:'#0077b5'}}>
                                 {c.linkedin_url.replace('https://www.linkedin.com/in/','linkedin.com/in/')} ↗
                               </a>
-                            ) : <p className="text-xs" style={{color:'#6b6b80'}}>Not found</p>}
+                            </div>
+                            {c.linkedin_verified
+                              ? <Badge text="✓ Verified" color="#16a34a"/>
+                              : <Badge text="⚠ Unconfirmed" color="#b45309"/>}
                           </div>
-                          {c.linkedin_verified
-                            ? <Badge text="✓ Verified" color="#16a34a"/>
-                            : <Badge text="⚠ Verify" color="#b45309"/>}
-                        </div>
+                        )}
+                        {!c.linkedin_url && (
+                          <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{background:'#1a1a24'}}>
+                            <span className="text-xs" style={{color:'#6b6b80'}}>LinkedIn not verified — search manually on</span>
+                            <a href={`https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(c.name + ' ' + (selected?.company_name||''))}`}
+                              target="_blank" rel="noreferrer" className="text-xs font-medium" style={{color:'#0077b5'}}>
+                              LinkedIn ↗
+                            </a>
+                          </div>
+                        )}
                         {/* Email */}
                         <div className="rounded-lg p-3" style={{background:'#1a1a24'}}>
                           <div className="flex items-center justify-between mb-1">
