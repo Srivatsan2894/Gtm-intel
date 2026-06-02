@@ -243,12 +243,11 @@ export default function Dashboard() {
           {/* Column headers */}
           {!selected && (
             <div className="grid px-4 py-2 text-xs font-mono uppercase tracking-wider flex-shrink-0"
-              style={{gridTemplateColumns:'1.2fr 140px 100px 80px 120px 60px 60px 60px 80px',color:'#6b6b80',borderBottom:'1px solid #1a1a24',background:'#0d0d14'}}>
+              style={{gridTemplateColumns:'1.4fr 130px 100px 80px 60px 60px 60px 80px',color:'#6b6b80',borderBottom:'1px solid #1a1a24',background:'#0d0d14'}}>
               <span>Company</span>
               <span>Website</span>
               <span>Industry</span>
               <span>Stage</span>
-              <span>Pipeline</span>
               <span>Score</span>
               <span>Signals</span>
               <span>Contacts</span>
@@ -332,15 +331,7 @@ export default function Dashboard() {
                   <div className="self-center">
                     <span className="text-xs" style={{color:'#9ca3af'}}>{p.stage || '—'}</span>
                   </div>
-                  <div className="self-center" onClick={e => e.stopPropagation()}>
-                    <select value={p.pipeline_stage || 'researched'}
-                      onChange={e => updateProspect(p.id, {pipeline_stage: e.target.value})}
-                      className="text-xs rounded px-1.5 py-1 outline-none cursor-pointer"
-                      style={{background:'#1a1a24',color:STAGE_CONFIG[p.pipeline_stage||'researched']?.color||'#6b6b80',border:'1px solid #2a2a38'}}>
-                      {Object.entries(STAGE_CONFIG).map(([v,c]) => <option key={v} value={v}>{c.label}</option>)}
-                    </select>
-                  </div>
-                  <div className="self-center">
+<div className="self-center">
                     <span className="text-sm font-bold"
                       style={{color:p.priority_score>=8?'#16a34a':p.priority_score>=6?'#b45309':'#6b6b80'}}>
                       {p.priority_score}/10
@@ -468,21 +459,38 @@ export default function Dashboard() {
                           style={{background:`${color}10`,borderBottom:`1px solid ${color}20`}}>
                           <div className="flex items-center gap-2">
                             <Badge text={typeLabels[s.type]||s.type} color={color}/>
-                            {s.date && <span className="text-xs" style={{color:'#6b6b80'}}>{s.date}</span>}
+                            {s.date && <span className="text-xs font-mono" style={{color:'#6b6b80'}}>{s.date}</span>}
                           </div>
-                          {s.source_url && (
-                            <a href={s.source_url} target="_blank" rel="noreferrer"
-                              className="text-xs font-medium" style={{color:'#6c63ff'}}>{s.source} ↗</a>
+                          {s.source && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs" style={{color:'#6b6b80'}}>via</span>
+                              {s.source_url
+                                ? <a href={s.source_url} target="_blank" rel="noreferrer"
+                                    className="text-xs font-semibold hover:underline" style={{color:'#6c63ff'}}>
+                                    {s.source} ↗
+                                  </a>
+                                : <span className="text-xs font-semibold" style={{color:'#6b6b80'}}>{s.source}</span>
+                              }
+                            </div>
                           )}
                         </div>
                         <div className="p-4" style={{background:'#13131c'}}>
                           <p className="text-sm font-bold text-white mb-2">{s.headline}</p>
                           <p className="text-sm mb-3" style={{color:'#c0c0d4',lineHeight:'1.7'}}>{s.detail}</p>
-                          <div className="flex items-start gap-2 px-3 py-2 rounded-lg"
-                            style={{background:'#6c63ff10',border:'1px solid #6c63ff20'}}>
-                            <span className="text-xs flex-shrink-0" style={{color:'#6c63ff'}}>💡 Why it matters</span>
-                            <p className="text-xs" style={{color:'#a0a0c0'}}>{s.why_it_matters}</p>
-                          </div>
+                          {s.why_it_matters && (
+                            <div className="flex items-start gap-2 px-3 py-2 rounded-lg mb-3"
+                              style={{background:'#6c63ff10',border:'1px solid #6c63ff20'}}>
+                              <span className="text-xs flex-shrink-0 font-semibold" style={{color:'#6c63ff'}}>💡 Why it matters</span>
+                              <p className="text-xs" style={{color:'#a0a0c0'}}>{s.why_it_matters}</p>
+                            </div>
+                          )}
+                          {s.source_url && (
+                            <a href={s.source_url} target="_blank" rel="noreferrer"
+                              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium"
+                              style={{background:'#1a1a24',color:'#6c63ff',border:'1px solid #2a2a38'}}>
+                              📰 Read full article: {s.source} ↗
+                            </a>
+                          )}
                         </div>
                       </div>
                     )

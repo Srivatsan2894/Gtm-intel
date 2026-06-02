@@ -127,29 +127,37 @@ async function generateScoops(snapshot: Snapshot, data: RawCompanyData, salesDes
     `[HIRING] ${j.title} | Tools: ${j.tools_mentioned.join(', ')} | Signals: ${j.signals.join(', ')}`
   ).join('\n')
 
-  const prompt = `You are a sales signal analyst. Extract buying signals from this REAL news data.
+  const prompt = `You are a sales signal analyst. Extract buying signals from REAL news data below.
 
 Sales rep sells: "${salesDescription}"
 Company: ${snapshot.name} (${snapshot.category}, ${snapshot.stage})
 
-REAL NEWS DATA (use exact details from here):
+REAL NEWS DATA — extract signals from these exact articles:
 ${newsText || 'No news found'}
 
 HIRING SIGNALS:
 ${jobText || 'No hiring data found'}
 
-For each signal, state EXACTLY what happened (use real details from the data) and WHY it creates a sales opportunity.
-Return ONLY JSON array (empty array if no real signals):
+RULES:
+- Use ONLY information explicitly in the data above
+- source_url MUST be the exact URL from the data (the link after "Source:")
+- source MUST be the publication name from the data
+- date MUST be the exact date from the data
+- headline must reference specific facts (amounts, names, dates)
+- detail must contain specifics (e.g. "$38M Series B led by GV" not "raised funding")
+
+Return ONLY JSON array ([] if no real signals with URLs):
 [{
   "type": "funding|acquisition|layoff|leadership_change|hiring_spike|product_launch|expansion|partnership|press",
-  "headline": "specific headline using real details",
-  "detail": "2-3 sentences with exact specifics from the news data above",
+  "headline": "specific headline with exact details from source",
+  "detail": "2-3 sentences with exact specifics (amounts, names, dates) from the article",
+  "summary": "one sentence plain summary of what happened",
   "why_it_matters": "one sentence: specific buying opportunity for this sales rep",
-  "source": "publication name from data",
-  "source_url": "exact URL from data",
+  "source": "exact publication name from data",
+  "source_url": "exact URL from the data — REQUIRED",
   "date": "exact date from data"
 }]
-Max 8 scoops. Only include scoops with REAL details from the data provided.`
+Max 8 scoops. Every scoop MUST have a source_url.`
 
   const raw = await groq(prompt, 1500, 0.1)
   return parseJSON<GTMScoop[]>(raw, [])
@@ -356,15 +364,25 @@ export async function runFullResearch(companyName: string, salesDescription: str
           .filter((t, i, arr) => arr.indexOf(t) === i)
           .map(t => ({ category: 'Job postings', tool: t, confidence: 'medium' as const, verified: false, source: 'Hiring data' }))
 
-    // All signals merged
+    // All signals merged — AI scoops first, then raw news as fallback
+    const aiScoopUrls = new Set(scoops.map(s => s.source_url).filter(Boolean))
     const allScoops = [
       ...scoops,
-      // Add any news not already in scoops
-      ...data.news.filter(n => !scoops.some(s => s.headline.includes(n.title.slice(0,30)))).map(n => ({
-        type: n.type, headline: n.title, detail: n.snippet,
-        why_it_matters: '', source: n.source, source_url: n.url, date: n.date,
-      })),
-    ].slice(0, 10)
+      // Add raw news items not already covered by AI scoops
+      ...data.news
+        .filter(n => !aiScoopUrls.has(n.url) && !scoops.some(s => s.headline.toLowerCase().includes(n.title.slice(0,25).toLowerCase())))
+        .map(n => ({
+          type: n.type,
+          headline: n.title,
+          detail: n.snippet,
+          summary: n.snippet,
+          why_it_matters: '',
+          source: n.source,
+          source_url: n.url,
+          date: n.date,
+        })),
+    ].filter(s => s.source_url) // only show scoops with real source URLs
+    .slice(0, 12)
 
     return {
       company: {
