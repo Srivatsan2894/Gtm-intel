@@ -484,7 +484,7 @@ export default function Dashboard() {
                       ))}
                     </div>
                   </Section>
-                  {(brief as unknown as {job_signals?: JobSignal[]}).job_signals?.length > 0 && (
+                  {!!((brief as unknown as {job_signals?: JobSignal[]}).job_signals?.length) && (
                     <Section title="Hiring Intelligence (from job postings)">
                       <div className="space-y-3">
                         {(brief as unknown as {job_signals: JobSignal[]}).job_signals.map((j, i) => (
