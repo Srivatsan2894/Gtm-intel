@@ -18,12 +18,19 @@ interface GTMScoop {
   type: string; headline: string; detail: string
   why_it_matters: string; source: string; source_url: string; date: string
 }
+interface GTMScoop {
+  type: string; headline: string; detail: string
+  why_it_matters: string; source: string; source_url: string; date: string
+}
+interface JobSignal {
+  title: string; tools_mentioned: string[]; signals: string[]; url: string
+}
 interface GTMBrief {
   executive_summary: string; business_model: string; gtm_motion: string
   gtm_scoops: GTMScoop[]
   pain_points: Array<{title: string; description: string; severity: string}>
-  tech_stack: Array<{category: string; tool: string; confidence: string}>
-  buying_signals: Array<{signal: string; source: string; source_url: string}>
+  tech_stack: Array<{category: string; tool: string; confidence: string; verified?: boolean; source?: string}>
+  buying_signals: Array<{signal: string; why_it_matters?: string; source: string; source_url: string; date?: string}>
   discovery_questions: string[]
   outreach_angles: Array<{title: string; description: string}>
   cold_email: string; linkedin_message: string; call_script: string
@@ -461,19 +468,44 @@ export default function Dashboard() {
                       ))}
                     </div>
                   </Section>
-                  <Section title="Tech Stack (Assumed)">
-                    <div className="grid grid-cols-2 gap-2">
+                  <Section title={`Tech Stack ${brief.tech_stack?.some(t => t.verified) ? '(BuiltWith Verified ✓)' : '(Inferred from job postings)'}`}>
+                    <div className="space-y-2">
                       {brief.tech_stack?.map((t,i) => (
                         <div key={i} className="flex items-center justify-between p-3 rounded-lg" style={{background:'#1a1a24'}}>
-                          <div>
-                            <p className="text-xs font-mono" style={{color:'#6b6b80'}}>{t.category}</p>
-                            <p className="text-sm font-medium text-white">{t.tool}</p>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 mb-0.5">
+                              <p className="text-xs font-mono" style={{color:'#6b6b80'}}>{t.category}</p>
+                              {t.verified && <span className="text-xs" style={{color:'#16a34a'}}>✓ BuiltWith</span>}
+                              {!t.verified && t.source && <span className="text-xs" style={{color:'#b45309'}}>⚠ {t.source}</span>}
+                            </div>
+                            <p className="text-sm font-medium text-white truncate">{t.tool}</p>
                           </div>
-                          <Badge text={t.confidence} color={t.confidence==='high'?'#16a34a':'#b45309'}/>
                         </div>
                       ))}
                     </div>
                   </Section>
+                  {(brief as unknown as {job_signals?: JobSignal[]}).job_signals?.length > 0 && (
+                    <Section title="Hiring Intelligence (from job postings)">
+                      <div className="space-y-3">
+                        {(brief as unknown as {job_signals: JobSignal[]}).job_signals.map((j, i) => (
+                          <div key={i} className="p-3 rounded-lg" style={{background:'#1a1a24'}}>
+                            <p className="text-sm font-semibold text-white mb-2">{j.title}</p>
+                            {j.tools_mentioned.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mb-2">
+                                {j.tools_mentioned.map((t,k) => (
+                                  <span key={k} className="text-xs px-2 py-0.5 rounded font-mono"
+                                    style={{background:'#6c63ff20',color:'#6c63ff'}}>{t}</span>
+                                ))}
+                              </div>
+                            )}
+                            {j.signals.map((s,k) => (
+                              <p key={k} className="text-xs" style={{color:'#9ca3af'}}>→ {s}</p>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    </Section>
+                  )}
                   <Section title="Discovery Questions">
                     <ol className="space-y-2">
                       {brief.discovery_questions?.map((q,i) => (

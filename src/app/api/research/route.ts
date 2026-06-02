@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
       linkedin_message: research.linkedin_message || null,
       call_script: research.call_script || null,
       objections: research.objections || [],
-      raw_response: JSON.stringify(research.gtm_scoops || []),
+      raw_response: JSON.stringify({ scoops: research.gtm_scoops || [], job_signals: research.job_signals || [] }),
     }, { onConflict: 'prospect_id' })
 
     // Save contacts
