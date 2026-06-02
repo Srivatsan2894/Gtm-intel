@@ -171,7 +171,7 @@ function extractToolsFromText(text: string): string[] {
   for (const tool of TOOL_PATTERNS) {
     if (lower.includes(tool.toLowerCase())) found.push(tool)
   }
-  return [...new Set(found)]
+  return Array.from(new Set(found))
 }
 
 function classifyNewsType(title: string, snippet: string): NewsItem['type'] {
@@ -222,13 +222,13 @@ export async function fetchCompanyData(companyName: string, domain?: string): Pr
 
   // Classify news items
   const allNewsRaw = [...newsResults, ...fundingNewsResults, ...leadershipNewsResults, ...productNewsResults]
-  const seen = new Set<string>()
+  const seen: Record<string,boolean> = {}
   const recentNews: NewsItem[] = []
 
   for (const n of allNewsRaw) {
     const key = n.title.slice(0, 60)
-    if (seen.has(key)) continue
-    seen.add(key)
+    if (seen[key]) continue
+    seen[key] = true
     recentNews.push({
       title: n.title,
       snippet: n.snippet,
