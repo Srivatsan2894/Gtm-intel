@@ -6,46 +6,56 @@ export const maxDuration = 60
 const SERPER_API = 'https://google.serper.dev/search'
 const GROQ_API = 'https://api.groq.com/openai/v1/chat/completions'
 
-async function serperSearch(query: string, num = 8): Promise<Array<{title: string; snippet: string; link: string}>> {
+async function search(query: string, num = 8, type = 'search'): Promise<Array<{title: string; snippet: string; link: string}>> {
   const key = process.env.SERPER_API_KEY
   if (!key) return []
   try {
+    const body: Record<string, unknown> = { q: query, num }
+    if (type === 'news') body.type = 'news'
     const res = await fetch(SERPER_API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-API-KEY': key },
-      body: JSON.stringify({ q: query, num }),
+      body: JSON.stringify(body),
     })
     const data = await res.json()
-    return data.organic || []
+    return (type === 'news' ? data.news : data.organic) || []
   } catch { return [] }
 }
 
-async function serperNews(query: string, num = 8): Promise<Array<{title: string; snippet: string; link: string}>> {
-  const key = process.env.SERPER_API_KEY
-  if (!key) return []
-  try {
-    const res = await fetch(SERPER_API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-KEY': key },
-      body: JSON.stringify({ q: query, num, type: 'news' }),
-    })
-    const data = await res.json()
-    return data.news || []
-  } catch { return [] }
+// Domains that are aggregators/media — not actual companies
+const SKIP_DOMAINS = [
+  'techcrunch','crunchbase','linkedin','producthunt','g2','forbes','bloomberg',
+  'venturebeat','wired','medium','github','twitter','x.com','facebook','youtube',
+  'wikipedia','reddit','glassdoor','indeed','angellist','ycombinator','pitchbook',
+  'businesswire','prnewswire','globenewswire','techfundingnews','sifted',
+  'wsj','ft.com','reuters','nytimes','theverge','zdnet','cnet','mashable',
+  'businessinsider','inc.com','entrepreneur','hbr.org','harvard','stanford',
+  'notion','google','microsoft','apple','amazon','meta','netflix','salesforce',
+  'hubspot','slack','zoom','dropbox','stripe','shopify','atlassian',
+]
+
+function isRealCompany(domain: string): boolean {
+  if (!domain || domain.length < 4) return false
+  const base = domain.split('.')[0].toLowerCase()
+  return !SKIP_DOMAINS.some(s => base.includes(s) || domain.includes(s))
 }
 
-function extractDomain(url: string): string {
-  try { return new URL(url).hostname.replace('www.', '') } catch { return '' }
-}
+function extractName(title: string, domain: string): string {
+  // Try to get company name from title
+  let name = title
+    .replace(/\s*[-–—|:]\s*.*/g, '')  // remove after dash/colon
+    .replace(/\s*(raises|raised|secures|closes|announces|launches|unveils).*/gi, '')
+    .replace(/\s*(Inc|LLC|Ltd|Corp|Co|AG|GmbH|SAS)\.?$/gi, '')
+    .replace(/['"]/g, '')
+    .trim()
 
-const EXCLUDED = new Set([
-  'techcrunch.com','crunchbase.com','linkedin.com','producthunt.com','g2.com',
-  'forbes.com','bloomberg.com','venturebeat.com','wired.com','medium.com',
-  'github.com','twitter.com','x.com','facebook.com','youtube.com',
-  'wikipedia.org','reddit.com','glassdoor.com','indeed.com','angel.co',
-  'ycombinator.com','pitchbook.com','techfundingnews.com','sifted.eu',
-  'businesswire.com','prnewswire.com','globenewswire.com',
-])
+  // If name is too long or too short, use domain
+  if (name.length < 2 || name.length > 45) {
+    const domainName = domain.split('.')[0]
+    name = domainName.charAt(0).toUpperCase() + domainName.slice(1)
+  }
+  return name
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -56,113 +66,139 @@ export async function POST(req: NextRequest) {
     const { data: profile } = await db.from('sales_profiles').select('*').eq('id', profile_id).single()
     if (!profile) return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
 
-    const industries = (profile.target_industries || []).slice(0, 3).join(' ')
-    const sizes = profile.target_company_sizes || []
-    const stage = sizes.some((s: string) => s.includes('1000')) ? 'Series C D' :
-                  sizes.some((s: string) => s.includes('201') || s.includes('501')) ? 'Series B C' : 'Series A B'
+    const industries = (profile.target_industries || ['B2B SaaS']).slice(0, 2).join(' ')
+    // Extract key words from product description for more relevant searches
+    const descWords = profile.product_description
+      .toLowerCase()
+      .replace(/[^a-z\s]/g, '')
+      .split(' ')
+      .filter((w: string) => w.length > 4 && !['sells','sell','helps','using','their','about','with','that','this','have'].includes(w))
+      .slice(0, 4)
+      .join(' ')
 
-    // Run 6 fast parallel searches — names only, no full research
+    // 6 diverse searches — broader queries, no quoted phrases
     const [s1, s2, s3, s4, s5, s6] = await Promise.all([
-      serperNews(`AI SaaS startup ${industries} "Series ${stage.split(' ')[1]}" funding raised 2025`, 10),
-      serperNews(`AI-first ${industries} company funding round 2025 2026`, 10),
-      serperSearch(`site:crunchbase.com/organization AI ${industries} startup ${stage}`, 8),
-      serperNews(`${profile.product_description.split(' ').slice(0, 6).join(' ')} startup funding 2025`, 8),
-      serperSearch(`top AI ${industries} startups "raised" million 2025`, 8),
-      serperNews(`artificial intelligence ${industries} "Series B" OR "Series C" startup 2025 2026`, 8),
+      // Recent funded AI companies in target space
+      search(`AI startup ${industries} funding raised million 2025`, 10, 'news'),
+      // Product description based search
+      search(`${descWords} AI SaaS company 2025`, 8, 'news'),
+      // Growing AI companies
+      search(`fastest growing AI ${industries} companies 2025 2026`, 8),
+      // TechCrunch style funding news
+      search(`${industries} AI company series funding 2025 techcrunch`, 8, 'news'),
+      // Specific product category searches
+      search(`best AI ${industries} software tools 2025 startup`, 8),
+      // Crunchbase style
+      search(`site:crunchbase.com ${industries} AI startup 2024 2025`, 8),
     ])
 
-    // Score and extract companies
-    const scores = new Map<string, { name: string; domain: string; score: number; snippet: string }>()
-
+    // Score every result
+    const scoreMap: Record<string, { name: string; domain: string; score: number; snippet: string }> = {}
     const allResults = [...s1, ...s2, ...s3, ...s4, ...s5, ...s6]
 
     for (const r of allResults) {
-      const domain = extractDomain(r.link)
-      if (!domain || EXCLUDED.has(domain)) continue
+      let domain = ''
+      try { domain = new URL(r.link).hostname.replace('www.', '') } catch { continue }
 
-      // Extract company name from title
-      let name = r.title
-        .replace(/\s*[-|–—|:]\s*.*/g, '')
-        .replace(/\s*(Inc|LLC|Ltd|Corp|Co|AG)\.?$/gi, '')
-        .trim()
-      if (name.length < 2 || name.length > 50) {
-        name = domain.split('.')[0]
-        name = name.charAt(0).toUpperCase() + name.slice(1)
+      // For Crunchbase results, extract the company slug as a pseudo-domain
+      if (domain.includes('crunchbase.com')) {
+        const slug = r.link.match(/crunchbase\.com\/organization\/([^/?]+)/)?.[1]
+        if (slug) {
+          const key = `cb_${slug}`
+          const name = extractName(r.title, slug)
+          if (!scoreMap[key]) scoreMap[key] = { name, domain: `${slug}.com`, score: 0, snippet: r.snippet || '' }
+          scoreMap[key].score += 20
+        }
+        continue
       }
 
-      const existing = scores.get(domain)
-      const snippetLower = r.snippet?.toLowerCase() || ''
-      const boost = ['ai', 'artificial intelligence', 'machine learning', 'saas', 'series', 'funding', 'raised']
-        .filter(k => snippetLower.includes(k)).length * 3
+      if (!isRealCompany(domain)) continue
 
-      if (existing) {
-        existing.score += 10 + boost
+      const key = domain
+      const name = extractName(r.title, domain)
+      const snippet = (r.snippet || '').toLowerCase()
+
+      // Base score
+      let score = 10
+      // Boost for relevant keywords in snippet
+      const boostWords = ['ai', 'artificial intelligence', 'machine learning', 'saas', 'platform',
+                         'startup', 'series', 'funding', 'raised', 'launch', 'growth', ...descWords.split(' ')]
+      score += boostWords.filter(w => w && snippet.includes(w)).length * 3
+
+      if (scoreMap[key]) {
+        scoreMap[key].score += score
       } else {
-        scores.set(domain, { name, domain, score: 10 + boost, snippet: r.snippet || '' })
+        scoreMap[key] = { name, domain, score, snippet: r.snippet || '' }
       }
     }
 
-    const candidates = Array.from(scores.values())
-      .filter(c => !c.domain.includes('undefined'))
+    // Sort by score, take top 15
+    const candidates = Object.values(scoreMap)
       .sort((a, b) => b.score - a.score)
       .slice(0, 15)
 
     if (!candidates.length) {
-      return NextResponse.json({ error: 'No companies found' }, { status: 500 })
+      return NextResponse.json({
+        error: 'No companies found from search results. Try updating your product description or target industries.',
+        debug: { searches_ran: 6, total_results: allResults.length }
+      }, { status: 500 })
     }
 
-    // Ask Groq to pick best 5 from the scored list — fast single call
+    // Use Groq to pick the 5 best matches
+    let selected = candidates.slice(0, 5).map(c => ({ name: c.name, domain: c.domain }))
+
     const groqKey = process.env.GROQ_API_KEY
-    let selected: Array<{ name: string; domain: string }> = candidates.slice(0, 5).map(c => ({ name: c.name, domain: c.domain }))
+    if (groqKey && candidates.length > 5) {
+      try {
+        const list = candidates.map((c, i) =>
+          `${i + 1}. ${c.name} (${c.domain}) — ${c.snippet.slice(0, 100)}`
+        ).join('\n')
 
-    if (groqKey) {
-      const list = candidates.map((c, i) =>
-        `${i + 1}. ${c.name} (${c.domain}) — ${c.snippet.slice(0, 100)}`
-      ).join('\n')
-
-      const res = await fetch(GROQ_API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: [{
-            role: 'user',
-            content: `Sales rep sells: "${profile.product_description.slice(0, 200)}"
+        const res = await fetch(GROQ_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
+          body: JSON.stringify({
+            model: 'llama-3.3-70b-versatile',
+            messages: [{
+              role: 'user',
+              content: `A sales rep sells: "${profile.product_description.slice(0, 200)}"
 Target industries: ${industries}
-ICP: ${profile.icp_notes || 'AI-first SaaS startups'}
 
-Pick the best 5 from these discovered companies that are:
-- AI-first or AI-native SaaS companies (not media sites, aggregators, agencies)
-- Most likely to need what the sales rep sells
-- Real companies with actual products
-
+From these discovered companies, pick the 5 BEST prospects:
 ${list}
 
-Return ONLY JSON array, no markdown:
-[{"name":"Company Name","domain":"domain.com"}]`
-          }],
-          max_tokens: 300,
-          temperature: 0.1,
-        }),
-      })
+Only pick real B2B software/AI companies (not media, agencies, or marketplaces).
+Return ONLY JSON array: [{"name":"Company","domain":"domain.com"}]`
+            }],
+            max_tokens: 250,
+            temperature: 0.1,
+          }),
+        })
 
-      if (res.ok) {
-        const data = await res.json()
-        const raw = data.choices?.[0]?.message?.content || ''
-        try {
+        if (res.ok) {
+          const data = await res.json()
+          const raw = data.choices?.[0]?.message?.content || ''
           const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
           const match = clean.match(/\[[\s\S]*\]/)
-          if (match) selected = JSON.parse(match[0]).slice(0, 5)
-        } catch { /* use fallback */ }
-      }
+          if (match) {
+            const parsed = JSON.parse(match[0])
+            if (Array.isArray(parsed) && parsed.length > 0) selected = parsed.slice(0, 5)
+          }
+        }
+      } catch (e) { console.error('Groq selection failed:', e) }
     }
 
-    // Save as pending prospects (no research yet — dashboard will trigger research per company)
+    // Save as pending prospects — research runs separately per company
     const saved = []
     for (const company of selected) {
+      // Check if already exists
       const { data: existing } = await db.from('prospects')
         .select('id').eq('profile_id', profile_id).eq('company_name', company.name).single()
-      if (existing) { saved.push({ ...company, prospect_id: existing.id, status: 'existing' }); continue }
+
+      if (existing) {
+        saved.push({ ...company, prospect_id: existing.id, status: 'existing' })
+        continue
+      }
 
       const { data: prospect } = await db.from('prospects').insert({
         profile_id,
