@@ -40,6 +40,7 @@ interface Prospect {
   id: string; company_name: string; domain: string; industry: string
   size: string; stage: string; hq: string; linkedin_url: string
   description: string; priority_score: number; last_researched_at: string
+  pipeline_stage: string; notes: string
   contacts: Contact[]; signals: Signal[]; gtm_briefs: GTMBrief[]
 }
 interface Profile {
@@ -62,6 +63,15 @@ const ROLE_COLORS: Record<string,string> = {
   champion:'#16a34a',blocker:'#dc2626',influencer:'#2563eb',evaluator:'#b45309',
 }
 const CONF_COLORS = {high:'#16a34a',medium:'#b45309',low:'#dc2626'}
+const STAGE_CONFIG: Record<string, {label: string; color: string}> = {
+  researched:      {label: 'Researched',      color: '#6b6b80'},
+  contacted:       {label: 'Contacted',        color: '#2563eb'},
+  in_conversation: {label: 'In Conversation',  color: '#9333ea'},
+  proposal:        {label: 'Proposal Sent',    color: '#b45309'},
+  won:             {label: 'Won',              color: '#16a34a'},
+  lost:            {label: 'Lost',             color: '#dc2626'},
+  paused:          {label: 'Paused',           color: '#6b6b80'},
+}
 
 // ── Small components ─────────────────────────────────────────────────────────
 function Badge({text,color}:{text:string;color:string}) {
@@ -137,6 +147,17 @@ export default function Dashboard() {
     if (selected?.id === id) setSelected(null)
   }
 
+  const updateProspect = async (id: string, updates: {pipeline_stage?: string; notes?: string}) => {
+    await fetch('/api/prospects/update', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id, ...updates}),
+    })
+    setProspects(prev => prev.map(p => p.id === id ? {...p, ...updates} : p))
+    if (selected?.id === id) setSelected(prev => prev ? {...prev, ...updates} : null)
+  }
+
+  const exportCSV = () => { if (profile) window.open(`/api/export?profile_id=${profile.id}`, '_blank') }
+
   const sorted = [...prospects].sort((a,b) => {
     if (sortCol === 'priority_score') return b.priority_score - a.priority_score
     if (sortCol === 'signals') return (b.signals?.length||0) - (a.signals?.length||0)
@@ -177,6 +198,11 @@ export default function Dashboard() {
               {researching ? <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin"/> : '+ Research'}
             </button>
           </div>
+          <button onClick={exportCSV}
+            className="text-xs px-3 py-1.5 rounded-lg font-medium"
+            style={{background:'#1a1a24',color:'#6b6b80',border:'1px solid #2a2a38'}}>
+            ↓ Export
+          </button>
           <button onClick={()=>{localStorage.clear();router.push('/setup')}}
             className="text-xs px-2 py-1.5 rounded-lg" style={{color:'#6b6b80'}}>
             ← Profile
@@ -217,11 +243,12 @@ export default function Dashboard() {
           {/* Column headers */}
           {!selected && (
             <div className="grid px-4 py-2 text-xs font-mono uppercase tracking-wider flex-shrink-0"
-              style={{gridTemplateColumns:'1.2fr 140px 100px 80px 60px 60px 60px 80px',color:'#6b6b80',borderBottom:'1px solid #1a1a24',background:'#0d0d14'}}>
+              style={{gridTemplateColumns:'1.2fr 140px 100px 80px 120px 60px 60px 60px 80px',color:'#6b6b80',borderBottom:'1px solid #1a1a24',background:'#0d0d14'}}>
               <span>Company</span>
               <span>Website</span>
               <span>Industry</span>
               <span>Stage</span>
+              <span>Pipeline</span>
               <span>Score</span>
               <span>Signals</span>
               <span>Contacts</span>
@@ -305,6 +332,14 @@ export default function Dashboard() {
                   <div className="self-center">
                     <span className="text-xs" style={{color:'#9ca3af'}}>{p.stage || '—'}</span>
                   </div>
+                  <div className="self-center" onClick={e => e.stopPropagation()}>
+                    <select value={p.pipeline_stage || 'researched'}
+                      onChange={e => updateProspect(p.id, {pipeline_stage: e.target.value})}
+                      className="text-xs rounded px-1.5 py-1 outline-none cursor-pointer"
+                      style={{background:'#1a1a24',color:STAGE_CONFIG[p.pipeline_stage||'researched']?.color||'#6b6b80',border:'1px solid #2a2a38'}}>
+                      {Object.entries(STAGE_CONFIG).map(([v,c]) => <option key={v} value={v}>{c.label}</option>)}
+                    </select>
+                  </div>
                   <div className="self-center">
                     <span className="text-sm font-bold"
                       style={{color:p.priority_score>=8?'#16a34a':p.priority_score>=6?'#b45309':'#6b6b80'}}>
@@ -383,6 +418,18 @@ export default function Dashboard() {
               {selected.description && (
                 <p className="text-sm mb-5" style={{color:'#9ca3af'}}>{selected.description}</p>
               )}
+
+              {/* Notes */}
+              <div className="mb-4">
+                <textarea
+                  placeholder="Account notes, meeting context, blockers, next steps..."
+                  value={selected.notes || ''}
+                  onChange={e => updateProspect(selected.id, {notes: e.target.value})}
+                  rows={2}
+                  className="w-full px-3 py-2 rounded-lg text-xs outline-none resize-none"
+                  style={{background:'#1a1a24',border:'1px solid #2a2a38',color:'#c0c0d4'}}
+                />
+              </div>
 
               {/* Tabs */}
               <div className="flex gap-1 mb-5 p-1 rounded-lg" style={{background:'#1a1a24'}}>
@@ -484,7 +531,7 @@ export default function Dashboard() {
                       ))}
                     </div>
                   </Section>
-                  {!!((brief as unknown as {job_signals?: JobSignal[]}).job_signals?.length) && (
+                  {(brief as unknown as {job_signals?: JobSignal[]}).job_signals != null && (brief as unknown as {job_signals?: JobSignal[]}).job_signals!.length > 0 && (
                     <Section title="Hiring Intelligence (from job postings)">
                       <div className="space-y-3">
                         {(brief as unknown as {job_signals: JobSignal[]}).job_signals.map((j, i) => (

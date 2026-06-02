@@ -252,7 +252,7 @@ async function promptC_generateInsights(
     .map(s => `[${s.type}] ${s.headline}: ${s.why_it_matters}`)
     .join('\n')
 
-  const toolsMentionedInJobs = Array.from(new Set(jobSignals.flatMap(j => j.tools_mentioned)))
+  const allTools = jobSignals.flatMap(j => j.tools_mentioned); const toolsMentionedInJobs = allTools.filter((t, i) => allTools.indexOf(t) === i)
 
   const prompt = `You are a senior sales strategist. Generate insights based ONLY on the structured data below.
 
