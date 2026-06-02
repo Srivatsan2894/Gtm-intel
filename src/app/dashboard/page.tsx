@@ -275,7 +275,7 @@ export default function Dashboard() {
               if (selected) {
                 // Compact list view when detail panel is open
                 return (
-                  <button key={p.id} onClick={()=>{setSelected(p);setActiveTab('brief')}}
+                  <button key={p.id} onClick={()=>{setSelected(p);setActiveTab('scoops')}}
                     className="w-full text-left px-4 py-3 transition-all flex items-center justify-between gap-2"
                     style={{
                       background: isSelected ? '#6c63ff15' : 'transparent',
@@ -299,7 +299,7 @@ export default function Dashboard() {
               }
               // Full table row
               return (
-                <button key={p.id} onClick={()=>{setSelected(p);setActiveTab('brief')}}
+                <button key={p.id} onClick={()=>{setSelected(p);setActiveTab('scoops')}}
                   className="w-full text-left grid px-4 py-3 transition-all hover:bg-white/5 group"
                   style={{
                     gridTemplateColumns:'1fr 100px 80px 60px 60px 60px 80px',
