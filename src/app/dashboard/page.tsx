@@ -93,7 +93,7 @@ export default function Dashboard() {
   const [profile, setProfile] = useState<Profile|null>(null)
   const [prospects, setProspects] = useState<Prospect[]>([])
   const [selected, setSelected] = useState<Prospect|null>(null)
-  const [activeTab, setActiveTab] = useState<'brief'|'contacts'|'signals'|'outreach'|'scoops'>('scoops')
+  const [activeTab, setActiveTab] = useState<'scoops'|'techstack'|'contacts'|'outreach'>('scoops')
   const [searchInput, setSearchInput] = useState('')
   const [researching, setResearching] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -424,12 +424,11 @@ export default function Dashboard() {
 
               {/* Tabs */}
               <div className="flex gap-1 mb-5 p-1 rounded-lg" style={{background:'#1a1a24'}}>
-                {(['scoops','brief','contacts','signals','outreach'] as const).map(tab => (
+                {(['scoops','techstack','contacts','outreach'] as const).map(tab => (
                   <button key={tab} onClick={()=>setActiveTab(tab)}
                     className="flex-1 py-2 rounded-md text-xs font-semibold capitalize transition-all"
                     style={{background:activeTab===tab?'#6c63ff':'transparent',color:activeTab===tab?'white':'#6b6b80'}}>
-                    {tab}
-                    {tab==='signals' && (selected.signals?.filter(s=>s.is_new).length||0)>0 && (
+                    {tab === 'techstack' ? 'Tech Stack' : tab === 'scoops' ? 'Scoops' : tab.charAt(0).toUpperCase()+tab.slice(1)}
                       <span className="ml-1 text-xs font-bold px-1 rounded-full" style={{background:'white',color:'#6c63ff'}}>
                         {selected.signals.filter(s=>s.is_new).length}
                       </span>
@@ -441,141 +440,69 @@ export default function Dashboard() {
               {/* SCOOPS TAB */}
               {activeTab==='scoops' && (
                 <div className="space-y-3 animate-in">
-                  {brief?.gtm_scoops && brief.gtm_scoops.length > 0 ? brief.gtm_scoops.map((s: GTMScoop, i: number) => {
+                  {!selected.signals || selected.signals.length === 0 ? (
+                    <div className="text-center py-8">
+                      <p className="text-2xl mb-3">📡</p>
+                      <p className="text-sm font-medium text-white mb-1">No scoops yet</p>
+                      <p className="text-xs" style={{color:'#6b6b80'}}>Research this company to pull live scoops from TechCrunch, Crunchbase, and funding news.</p>
+                    </div>
+                  ) : selected.signals.map((s, i) => {
                     const typeColors: Record<string,string> = {
-                      funding:'#16a34a',leadership_change:'#ea580c',hiring_spike:'#2563eb',
-                      expansion:'#0891b2',product_launch:'#9333ea',partnership:'#65a30d',
-                      tech_change:'#b45309',strategic:'#6c63ff',other:'#6b6b80'
+                      funding:'#16a34a', acquisition:'#9333ea', layoff:'#dc2626',
+                      leadership_change:'#ea580c', hiring_spike:'#2563eb',
+                      product_launch:'#9333ea', expansion:'#0891b2',
+                      partnership:'#65a30d', press:'#6b7280', other:'#6b6b80'
                     }
                     const typeLabels: Record<string,string> = {
-                      funding:'💰 Funding',leadership_change:'👤 Leadership',hiring_spike:'🧑‍💼 Hiring Spike',
-                      expansion:'📈 Expansion',product_launch:'🚀 Product Launch',partnership:'🤝 Partnership',
-                      tech_change:'⚙️ Tech Change',strategic:'🎯 Strategic',other:'📌 Signal'
+                      funding:'💰 Funding', acquisition:'🤝 Acquisition', layoff:'⚠️ Layoff',
+                      leadership_change:'👤 Leadership', hiring_spike:'🧑‍💼 Hiring',
+                      product_launch:'🚀 Product Launch', expansion:'📈 Expansion',
+                      partnership:'🤝 Partnership', press:'📰 Press', other:'📌 Signal'
                     }
-                    const color = typeColors[s.type] || '#6b6b80'
+                    const color = typeColors[s.signal_type] || '#6b6b80'
                     return (
-                      <div key={i} className="rounded-xl overflow-hidden" style={{border:`1px solid ${color}30`}}>
+                      <div key={s.id || i} className="rounded-xl overflow-hidden"
+                        style={{border:`1px solid ${color}30`}}>
                         <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2"
-                          style={{background:`${color}10`,borderBottom:`1px solid ${color}20`}}>
-                          <div className="flex items-center gap-2">
-                            <Badge text={typeLabels[s.type]||s.type} color={color}/>
-                            {s.date && <span className="text-xs font-mono" style={{color:'#6b6b80'}}>{s.date}</span>}
+                          style={{background:`${color}10`, borderBottom:`1px solid ${color}20`}}>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Badge text={typeLabels[s.signal_type]||s.signal_type} color={color}/>
+                            {s.is_new && <Badge text="NEW" color="#6c63ff"/>}
+                            {s.signal_date && <span className="text-xs font-mono" style={{color:'#6b6b80'}}>{s.signal_date}</span>}
                           </div>
-                          {s.source && (
+                          {s.source_name && (
                             <div className="flex items-center gap-1">
                               <span className="text-xs" style={{color:'#6b6b80'}}>via</span>
                               {s.source_url
                                 ? <a href={s.source_url} target="_blank" rel="noreferrer"
                                     className="text-xs font-semibold hover:underline" style={{color:'#6c63ff'}}>
-                                    {s.source} ↗
+                                    {s.source_name} ↗
                                   </a>
-                                : <span className="text-xs font-semibold" style={{color:'#6b6b80'}}>{s.source}</span>
+                                : <span className="text-xs font-semibold" style={{color:'#6b6b80'}}>{s.source_name}</span>
                               }
                             </div>
                           )}
                         </div>
                         <div className="p-4" style={{background:'#13131c'}}>
-                          <p className="text-sm font-bold text-white mb-2">{s.headline}</p>
-                          <p className="text-sm mb-3" style={{color:'#c0c0d4',lineHeight:'1.7'}}>{s.detail}</p>
-                          {s.why_it_matters && (
-                            <div className="flex items-start gap-2 px-3 py-2 rounded-lg mb-3"
-                              style={{background:'#6c63ff10',border:'1px solid #6c63ff20'}}>
-                              <span className="text-xs flex-shrink-0 font-semibold" style={{color:'#6c63ff'}}>💡 Why it matters</span>
-                              <p className="text-xs" style={{color:'#a0a0c0'}}>{s.why_it_matters}</p>
-                            </div>
-                          )}
+                          <p className="text-sm font-bold text-white mb-2">{s.title}</p>
+                          <p className="text-sm mb-3 leading-relaxed" style={{color:'#c0c0d4'}}>{s.summary}</p>
                           {s.source_url && (
                             <a href={s.source_url} target="_blank" rel="noreferrer"
                               className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium"
-                              style={{background:'#1a1a24',color:'#6c63ff',border:'1px solid #2a2a38'}}>
-                              📰 Read full article: {s.source} ↗
+                              style={{background:'#1a1a24', color:'#6c63ff', border:'1px solid #2a2a38'}}>
+                              📰 Read full article ↗
                             </a>
                           )}
                         </div>
                       </div>
                     )
-                  }) : (
-                    <div className="text-center py-8">
-                      <p className="text-2xl mb-3">📡</p>
-                      <p className="text-sm font-medium text-white mb-1">No scoops yet</p>
-                      <p className="text-xs" style={{color:'#6b6b80'}}>Run a refresh to pull latest signals for this account.</p>
-                    </div>
-                  )}
+                  })}
                 </div>
               )}
 
-              {/* BRIEF TAB */}
-              {activeTab==='brief' && brief && (
-                <div className="space-y-4 animate-in">
-                  <Section title="Executive Summary">
-                    <p className="text-sm leading-relaxed" style={{color:'#c0c0d4'}}>{brief.executive_summary}</p>
-                  </Section>
-                  <Section title="Pain Points">
-                    <div className="space-y-2">
-                      {brief.pain_points?.map((p,i) => (
-                        <div key={i} className="p-3 rounded-lg" style={{background:'#1a1a24'}}>
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-sm font-semibold text-white">{p.title}</span>
-                            <Badge text={p.severity} color={p.severity==='high'?'#dc2626':p.severity==='medium'?'#b45309':'#6b6b80'}/>
-                          </div>
-                          <p className="text-xs" style={{color:'#9ca3af'}}>{p.description}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </Section>
-                  <Section title={`Tech Stack ${brief.tech_stack?.some(t => t.verified) ? '(BuiltWith Verified ✓)' : '(Inferred from job postings)'}`}>
-                    <div className="space-y-2">
-                      {brief.tech_stack?.map((t,i) => (
-                        <div key={i} className="flex items-center justify-between p-3 rounded-lg" style={{background:'#1a1a24'}}>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 mb-0.5">
-                              <p className="text-xs font-mono" style={{color:'#6b6b80'}}>{t.category}</p>
-                              {t.verified && <span className="text-xs" style={{color:'#16a34a'}}>✓ BuiltWith</span>}
-                              {!t.verified && t.source && <span className="text-xs" style={{color:'#b45309'}}>⚠ {t.source}</span>}
-                            </div>
-                            <p className="text-sm font-medium text-white truncate">{t.tool}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </Section>
-                  {(brief as unknown as {job_signals?: JobSignal[]}).job_signals != null && (brief as unknown as {job_signals?: JobSignal[]}).job_signals!.length > 0 && (
-                    <Section title="Hiring Intelligence (from job postings)">
-                      <div className="space-y-3">
-                        {(brief as unknown as {job_signals: JobSignal[]}).job_signals.map((j, i) => (
-                          <div key={i} className="p-3 rounded-lg" style={{background:'#1a1a24'}}>
-                            <p className="text-sm font-semibold text-white mb-2">{j.title}</p>
-                            {j.tools_mentioned.length > 0 && (
-                              <div className="flex flex-wrap gap-1 mb-2">
-                                {j.tools_mentioned.map((t,k) => (
-                                  <span key={k} className="text-xs px-2 py-0.5 rounded font-mono"
-                                    style={{background:'#6c63ff20',color:'#6c63ff'}}>{t}</span>
-                                ))}
-                              </div>
-                            )}
-                            {j.signals.map((s,k) => (
-                              <p key={k} className="text-xs" style={{color:'#9ca3af'}}>→ {s}</p>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    </Section>
-                  )}
-                  <Section title="Discovery Questions">
-                    <ol className="space-y-2">
-                      {brief.discovery_questions?.map((q,i) => (
-                        <li key={i} className="flex gap-3 text-sm" style={{color:'#c0c0d4'}}>
-                          <span className="font-mono text-xs mt-0.5 flex-shrink-0" style={{color:'#6c63ff'}}>
-                            {String(i+1).padStart(2,'0')}
-                          </span>{q}
-                        </li>
-                      ))}
-                    </ol>
-                  </Section>
-                </div>
-              )}
 
-              {/* CONTACTS TAB */}
+              
+{/* CONTACTS TAB */}
               {activeTab==='contacts' && (
                 <div className="space-y-4 animate-in">
                   {(!selected.contacts || selected.contacts.length===0) ? (
@@ -657,33 +584,67 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {/* SIGNALS TAB */}
-              {activeTab==='signals' && (
-                <div className="space-y-3 animate-in">
-                  {(!selected.signals || selected.signals.length===0) ? (
-                    <p className="text-sm" style={{color:'#6b6b80'}}>No signals yet.</p>
-                  ) : [...selected.signals]
-                    .sort((a,b)=>(b.is_new?1:0)-(a.is_new?1:0))
-                    .map(s => (
-                    <div key={s.id} className="rounded-lg overflow-hidden"
-                      style={{border:`1px solid ${s.is_new?'#6c63ff40':'#2a2a38'}`}}>
-                      <div className="flex items-center gap-2 px-4 pt-4 pb-2 flex-wrap">
-                        <Badge text={SIGNAL_LABELS[s.signal_type]||s.signal_type} color={SIGNAL_COLORS[s.signal_type]||'#6b6b80'}/>
-                        {s.is_new && <Badge text="NEW" color="#6c63ff"/>}
-                        {s.source_verified && <Badge text="✓ Verified source" color="#16a34a"/>}
+              
+              {/* TECHSTACK TAB */}
+              {activeTab==='techstack' && (
+                <div className="animate-in">
+                  {brief?.tech_stack && brief.tech_stack.length > 0 ? (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs" style={{color:'#6b6b80'}}>
+                          {brief.tech_stack.some((t: {verified?: boolean}) => t.verified)
+                            ? '✓ Verified via OpenExplorer / BuiltWith'
+                            : '⚠ Inferred from job postings'}
+                        </p>
+                        <a href={`https://openexplorer.tech/?domain=${selected.domain}`}
+                          target="_blank" rel="noreferrer"
+                          className="text-xs px-3 py-1.5 rounded-lg font-medium"
+                          style={{background:'#6c63ff20',color:'#6c63ff',border:'1px solid #6c63ff30'}}>
+                          🔍 View full stack on OpenExplorer ↗
+                        </a>
                       </div>
-                      <div className="px-4 pb-4">
-                        <p className="text-sm font-semibold text-white mb-1">{s.title}</p>
-                        <p className="text-sm mb-2" style={{color:'#9ca3af'}}>{s.summary}</p>
-                        <div className="flex items-center gap-3">
-                          {s.source_url
-                            ? <a href={s.source_url} target="_blank" rel="noreferrer" className="text-xs font-medium" style={{color:'#6c63ff'}}>{s.source_name} ↗</a>
-                            : <span className="text-xs" style={{color:'#6b6b80'}}>{s.source_name}</span>}
-                          {s.signal_date && <span className="text-xs" style={{color:'#6b6b80'}}>{s.signal_date}</span>}
-                        </div>
-                      </div>
+                      {(() => {
+                        const grouped: Record<string, Array<{tool:string;verified?:boolean;source?:string}>> = {}
+                        brief.tech_stack.forEach((t: {category:string;tool:string;verified?:boolean;source?:string}) => {
+                          if (!grouped[t.category]) grouped[t.category] = []
+                          grouped[t.category].push(t)
+                        })
+                        return Object.entries(grouped).map(([cat, tools]) => (
+                          <div key={cat} className="rounded-xl overflow-hidden" style={{border:'1px solid #2a2a38'}}>
+                            <div className="px-4 py-2.5" style={{background:'#111118',borderBottom:'1px solid #1a1a24'}}>
+                              <p className="text-xs font-mono uppercase tracking-wider font-semibold" style={{color:'#6b6b80'}}>{cat}</p>
+                            </div>
+                            <div className="p-3 flex flex-wrap gap-2" style={{background:'#13131c'}}>
+                              {tools.map((t, i) => (
+                                <div key={i} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
+                                  style={{background:'#1a1a24',border:'1px solid #2a2a38'}}>
+                                  <span className="text-sm font-medium text-white">{t.tool}</span>
+                                  {t.verified
+                                    ? <span className="text-xs" style={{color:'#16a34a'}}>✓</span>
+                                    : <span className="text-xs" style={{color:'#b45309'}}>~</span>
+                                  }
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))
+                      })()}
                     </div>
-                  ))}
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-2xl mb-3">🔧</p>
+                      <p className="text-sm font-medium text-white mb-2">No tech stack data yet</p>
+                      <p className="text-xs mb-4" style={{color:'#6b6b80'}}>
+                        Re-research this company to scan their website for active technologies.
+                      </p>
+                      <a href={`https://openexplorer.tech/?domain=${selected.domain}`}
+                        target="_blank" rel="noreferrer"
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
+                        style={{background:'#6c63ff',color:'white'}}>
+                        🔍 Check on OpenExplorer ↗
+                      </a>
+                    </div>
+                  )}
                 </div>
               )}
 

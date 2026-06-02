@@ -77,75 +77,80 @@ function fmt(results: Array<{title: string; snippet: string; link: string; date?
   return results.map(r => `• ${r.title}\n  ${r.snippet}\n  Source: ${r.link}${r.date ? ` (${r.date})` : ''}`).join('\n\n')
 }
 
-// ── BuiltWith tech stack ──────────────────────────────────────────────────────
-async function getBuiltWith(domain: string): Promise<{ tools: TechTool[]; byCategory: Record<string, string[]> }> {
-  const key = process.env.BUILTWITH_API_KEY
-  if (!key) return { tools: [], byCategory: {} }
+// ── OpenExplorer tech stack (free, no API key) ───────────────────────────────
+async function getTechStack(domain: string): Promise<{ tools: TechTool[]; byCategory: Record<string, string[]> }> {
+  try {
+    // Try OpenExplorer first (free, no key)
+    const oeRes = await fetch(`https://openexplorer.tech/api/search?domain=${domain}`, {
+      headers: { 'Accept': 'application/json', 'User-Agent': 'GTM-Intel/1.0' },
+      signal: AbortSignal.timeout(8000),
+    })
+
+    if (oeRes.ok) {
+      const oeData = await oeRes.json()
+      const technologies = oeData.technologies || oeData.data || oeData.results || []
+
+      if (technologies.length > 0) {
+        const tools: TechTool[] = []
+        const byCategory: Record<string, string[]> = {}
+
+        for (const tech of technologies) {
+          const name = tech.name || tech.technology || tech.tool || String(tech)
+          const category = tech.category || tech.type || classifyTool(name)
+          if (!name || name.length < 2) continue
+
+          tools.push({ name, category, firstDetected: '', lastDetected: '', verified: true })
+          if (!byCategory[category]) byCategory[category] = []
+          if (!byCategory[category].includes(name)) byCategory[category].push(name)
+        }
+
+        if (tools.length > 0) return { tools, byCategory }
+      }
+    }
+  } catch { /* fall through to BuiltWith */ }
+
+  // Fallback: BuiltWith API
+  const bwKey = process.env.BUILTWITH_API_KEY
+  if (!bwKey) return { tools: [], byCategory: {} }
 
   try {
-    const res = await fetch(`${BUILTWITH_API}?KEY=${key}&LOOKUP=${domain}&HIDETEXT=yes`)
+    const res = await fetch(`${BUILTWITH_API}?KEY=${bwKey}&LOOKUP=${domain}&HIDETEXT=yes`,
+      { signal: AbortSignal.timeout(8000) })
     if (!res.ok) return { tools: [], byCategory: {} }
     const data = await res.json()
-
     const technologies = data.Results?.[0]?.Result?.Paths?.[0]?.Technologies || []
-
-    // Map BuiltWith tags to clean categories
-    const CAT_MAP: Record<string, string> = {
-      'CRM': 'CRM', 'Customer Relationship Management': 'CRM',
-      'Marketing Automation': 'Marketing', 'Email Marketing': 'Marketing',
-      'Email ESP': 'Marketing', 'Marketing': 'Marketing',
-      'Analytics': 'Analytics', 'Web Analytics': 'Analytics',
-      'Real Time Analytics': 'Analytics', 'Audience Measurement': 'Analytics',
-      'Advertising Networks': 'Advertising', 'Retargeting': 'Advertising',
-      'Live Chat': 'Sales & Support', 'Chat': 'Sales & Support',
-      'Help Desk': 'Sales & Support', 'Customer Support': 'Sales & Support',
-      'Payment': 'Payments', 'Payment Processors': 'Payments',
-      'Ecommerce': 'E-commerce',
-      'CDN': 'Infrastructure', 'Hosting': 'Infrastructure',
-      'SSL': 'Infrastructure', 'Web Server': 'Infrastructure',
-      'Tag Management': 'Data & Tracking', 'Data Management': 'Data & Tracking',
-      'Productivity': 'Productivity', 'Collaboration': 'Productivity',
-      'JavaScript Frameworks': 'Frontend', 'UI Frameworks': 'Frontend',
-      'CSS': 'Frontend',
-      'A/B Testing': 'Optimization', 'Conversion': 'Optimization',
-      'Survey': 'Research', 'Feedback': 'Research',
-    }
 
     const tools: TechTool[] = []
     const byCategory: Record<string, string[]> = {}
 
-    // Key business tools to highlight (not infrastructure noise)
-    const HIGHLIGHT_TAGS = new Set([
-      'CRM', 'Marketing Automation', 'Email Marketing', 'Email ESP',
-      'Analytics', 'Web Analytics', 'Live Chat', 'Chat', 'Help Desk',
-      'Customer Support', 'Payment', 'Payment Processors', 'A/B Testing',
-      'Tag Management', 'Retargeting', 'Advertising Networks',
-    ])
-
     for (const tech of technologies) {
       const rawTag = tech.Tag || tech.Categories?.[0] || 'Other'
-      const category = CAT_MAP[rawTag] || 'Other'
-      if (category === 'Other' && !HIGHLIGHT_TAGS.has(rawTag)) continue // skip noise
+      const category = classifyTool(tech.Name) !== 'Other' ? classifyTool(tech.Name) : rawTag
+      if (category === 'Other') continue
 
-      const tool: TechTool = {
-        name: tech.Name,
-        category,
-        firstDetected: tech.FirstDetected
-          ? new Date(tech.FirstDetected * 1000).toISOString().split('T')[0] : '',
-        lastDetected: tech.LastDetected
-          ? new Date(tech.LastDetected * 1000).toISOString().split('T')[0] : '',
-        verified: true,
-      }
-      tools.push(tool)
+      tools.push({ name: tech.Name, category, firstDetected: tech.FirstDetected ? new Date(tech.FirstDetected * 1000).toISOString().split('T')[0] : '', lastDetected: tech.LastDetected ? new Date(tech.LastDetected * 1000).toISOString().split('T')[0] : '', verified: true })
       if (!byCategory[category]) byCategory[category] = []
       byCategory[category].push(tech.Name)
     }
-
     return { tools, byCategory }
-  } catch (e) {
-    console.error('BuiltWith error:', e)
-    return { tools: [], byCategory: {} }
-  }
+  } catch { return { tools: [], byCategory: {} } }
+}
+
+function classifyTool(name: string): string {
+  const n = name.toLowerCase()
+  if (['salesforce','hubspot','pipedrive','attio','close','apollo'].some(t => n.includes(t))) return 'CRM'
+  if (['marketo','pardot','mailchimp','sendgrid','klaviyo','braze','iterable','customer.io'].some(t => n.includes(t))) return 'Marketing'
+  if (['google analytics','mixpanel','amplitude','segment','heap','posthog','hotjar'].some(t => n.includes(t))) return 'Analytics'
+  if (['intercom','zendesk','freshdesk','drift','crisp','helpscout'].some(t => n.includes(t))) return 'Support & Chat'
+  if (['stripe','braintree','zuora','chargebee','recurly','paypal'].some(t => n.includes(t))) return 'Payments'
+  if (['outreach','salesloft','gong','chorus','apollo','zoominfo'].some(t => n.includes(t))) return 'Sales'
+  if (['okta','auth0','onelogin','jumpcloud'].some(t => n.includes(t))) return 'Identity'
+  if (['slack','notion','asana','jira','linear','monday'].some(t => n.includes(t))) return 'Productivity'
+  if (['aws','gcp','azure','cloudflare','vercel','heroku','fastly'].some(t => n.includes(t))) return 'Infrastructure'
+  if (['react','next','vue','angular','typescript','tailwind'].some(t => n.includes(t))) return 'Frontend'
+  if (['figma','miro','canva','framer'].some(t => n.includes(t))) return 'Design'
+  if (['workday','bamboohr','rippling','lattice','greenhouse'].some(t => n.includes(t))) return 'HR & Recruiting'
+  return 'Other'
 }
 
 // ── News classifier ───────────────────────────────────────────────────────────
@@ -230,7 +235,7 @@ export async function fetchCompanyData(companyName: string, domain?: string): Pr
     serper(`"${companyName}" site:g2.com OR site:glassdoor.com review 2025`, 3),
 
     // BuiltWith tech stack
-    getBuiltWith(cleanDomain),
+    getTechStack(cleanDomain),
   ])
 
   // LinkedIn URL

@@ -18,6 +18,7 @@ export async function POST(req: NextRequest) {
 
     const db = createServerClient()
 
+    // Get profile
     const { data: profile, error: profileError } = await db
       .from('sales_profiles').select('*').eq('id', profile_id).single()
 
@@ -25,8 +26,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
     }
 
+    // If prospect_id is provided and company_name is 'test', get real name from DB
+    let realCompanyName = company_name
+    if (existingProspectId && (company_name === 'test' || company_name === '')) {
+      const { data: existingProspect } = await db
+        .from('prospects').select('company_name').eq('id', existingProspectId).single()
+      if (existingProspect) realCompanyName = existingProspect.company_name
+    }
+
+    // Run research pipeline
     const research: Any = await runFullResearch(
-      company_name,
+      realCompanyName,
       profile.product_description,
       profile.target_industries || []
     )
@@ -39,9 +49,9 @@ export async function POST(req: NextRequest) {
     let prospectId: string | null = existingProspectId || null
 
     if (prospectId) {
-      // Update the pending prospect created by discover
-      await db.from('prospects').update({
-        company_name: co.name || company_name,
+      // Update existing pending prospect
+      const { error: updateError } = await db.from('prospects').update({
+        company_name: co.name || realCompanyName,
         domain: co.domain || null,
         industry: co.industry || null,
         size: co.size || null,
@@ -52,11 +62,12 @@ export async function POST(req: NextRequest) {
         priority_score: co.priority_score || 5,
         last_researched_at: new Date().toISOString(),
       }).eq('id', prospectId)
+      if (updateError) console.error('Prospect update error:', updateError)
     } else {
-      // Manual search — upsert
+      // Create new prospect
       const { data: upserted } = await db.from('prospects').upsert({
         profile_id,
-        company_name: co.name || company_name,
+        company_name: co.name || realCompanyName,
         domain: co.domain || null,
         industry: co.industry || null,
         size: co.size || null,
@@ -72,9 +83,9 @@ export async function POST(req: NextRequest) {
       if (upserted) {
         prospectId = upserted.id
       } else {
-        const { data: inserted } = await db.from('prospects').insert({
+        const { data: inserted, error: insertError } = await db.from('prospects').insert({
           profile_id,
-          company_name: co.name || company_name,
+          company_name: co.name || realCompanyName,
           domain: co.domain || null, industry: co.industry || null,
           size: co.size || null, stage: co.stage || null,
           hq: co.hq || null, linkedin_url: co.linkedin_url || null,
@@ -82,6 +93,7 @@ export async function POST(req: NextRequest) {
           priority_score: co.priority_score || 5,
           last_researched_at: new Date().toISOString(),
         }).select('id').single()
+        if (insertError) console.error('Prospect insert error:', insertError)
         if (inserted) prospectId = inserted.id
       }
     }
@@ -91,7 +103,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Save GTM brief
-    await db.from('gtm_briefs').upsert({
+    const { error: briefError } = await db.from('gtm_briefs').upsert({
       prospect_id: prospectId,
       executive_summary: research.executive_summary || null,
       business_model: research.business_model || null,
@@ -105,13 +117,17 @@ export async function POST(req: NextRequest) {
       linkedin_message: research.linkedin_message || null,
       call_script: research.call_script || null,
       objections: research.objections || [],
-      raw_response: JSON.stringify({ scoops: research.gtm_scoops || [], job_signals: research.job_signals || [] }),
+      raw_response: JSON.stringify({
+        scoops: research.gtm_scoops || [],
+        job_signals: research.job_signals || [],
+      }),
     }, { onConflict: 'prospect_id' })
+    if (briefError) console.error('GTM brief save error:', briefError)
 
     // Save contacts
     if (Array.isArray(research.contacts) && research.contacts.length > 0) {
       await db.from('contacts').delete().eq('prospect_id', prospectId)
-      await db.from('contacts').insert(
+      const { error: contactsError } = await db.from('contacts').insert(
         research.contacts.map((c: Any) => ({
           prospect_id: prospectId,
           name: c.name, title: c.title || null, department: c.department || null,
@@ -123,34 +139,43 @@ export async function POST(req: NextRequest) {
           outreach_message: c.outreach_message || null,
         }))
       )
+      if (contactsError) console.error('Contacts save error:', contactsError)
     }
 
-    // Save GTM scoops as signals
+    // Save signals — scoops + raw news combined
     const scoops = Array.isArray(research.gtm_scoops) ? research.gtm_scoops : []
     const news = Array.isArray(research.recent_news) ? research.recent_news : []
-    const allSignals = [...scoops.map((s: Any) => ({
-      signal_type: s.type || 'other',
-      title: s.headline || s.title,
-      summary: `${s.detail || ''} ${s.why_it_matters ? '| Why it matters: ' + s.why_it_matters : ''}`.trim(),
-      source_name: s.source || null,
-      source_url: s.source_url || null,
-      signal_date: s.date || null,
-    })), ...news.map((n: Any) => ({
-      signal_type: n.signal_type || 'other',
-      title: n.title, summary: n.summary,
-      source_name: n.source_name || n.source || null,
-      source_url: n.source_url || null,
-      signal_date: n.date || null,
-    }))]
+
+    const allSignals = [
+      ...scoops.map((s: Any) => ({
+        signal_type: s.type || 'other',
+        title: s.headline || s.title || 'Signal',
+        summary: [s.detail, s.why_it_matters ? `Why it matters: ${s.why_it_matters}` : ''].filter(Boolean).join(' | '),
+        source_name: s.source || null,
+        source_url: s.source_url || null,
+        signal_date: s.date || null,
+      })),
+      ...news
+        .filter((n: Any) => !scoops.some((s: Any) => s.source_url === n.source_url))
+        .map((n: Any) => ({
+          signal_type: n.signal_type || 'press',
+          title: n.title,
+          summary: n.summary || n.snippet || '',
+          source_name: n.source_name || n.source || null,
+          source_url: n.source_url || null,
+          signal_date: n.date || null,
+        })),
+    ].filter(s => s.title) // only save signals with a title
 
     if (allSignals.length > 0) {
       await db.from('signals').delete().eq('prospect_id', prospectId)
-      await db.from('signals').insert(
+      const { error: signalsError } = await db.from('signals').insert(
         allSignals.map(s => ({
           prospect_id: prospectId, ...s,
           source_verified: true, is_new: true,
         }))
       )
+      if (signalsError) console.error('Signals save error:', signalsError)
     }
 
     return NextResponse.json({ success: true, prospect_id: prospectId, research })
