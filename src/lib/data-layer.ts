@@ -1,33 +1,18 @@
 /**
- * Data Layer — fetches structured facts from external sources
- * Zero AI in this file. Pure data fetching.
- *
- * Sources:
- * - Serper (web + news search)
- * - BuiltWith (verified tech stack)
- * - Job posting parser (intent signals from careers pages)
+ * Data Layer v2 — Direct source fetching
+ * Sources: Crunchbase, TechCrunch, BuiltWith, company website, LinkedIn
+ * Zero AI — pure structured data fetching
  */
 
 const SERPER_API = 'https://google.serper.dev/search'
 const BUILTWITH_API = 'https://api.builtwith.com/v21/api.json'
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 export interface TechTool {
   name: string
   category: string
-  tag: string
   firstDetected: string
   lastDetected: string
   verified: true
-}
-
-export interface JobSignal {
-  title: string
-  tools_mentioned: string[]
-  signals: string[]
-  url: string
-  date: string
 }
 
 export interface NewsItem {
@@ -36,255 +21,287 @@ export interface NewsItem {
   url: string
   source: string
   date: string
-  type: 'funding' | 'leadership' | 'product' | 'expansion' | 'press' | 'other'
+  type: 'funding' | 'acquisition' | 'layoff' | 'leadership' | 'product' | 'expansion' | 'partnership' | 'press' | 'other'
+}
+
+export interface JobSignal {
+  title: string
+  tools_mentioned: string[]
+  signals: string[]
+  url: string
 }
 
 export interface RawCompanyData {
   companyName: string
   domain: string
-  // Layer 1 — BuiltWith tech stack (verified)
+  // Crunchbase data
+  crunchbaseUrl: string | null
+  crunchbaseSnippet: string
+  // Funding data
+  fundingData: string
+  // Tech stack (BuiltWith)
   techStack: TechTool[]
-  techStackRaw: string
-  // Layer 2 — Website + LinkedIn facts
-  websiteSnippets: string
-  linkedinSnippets: string
+  techByCategory: Record<string, string[]>
+  // Website data
+  websiteData: string
+  // LinkedIn
   linkedinCompanyUrl: string | null
-  // Layer 3 — Funding + financial
-  fundingSnippets: string
-  crunchbaseSnippets: string
-  // Layer 4 — News signals
-  recentNews: NewsItem[]
-  // Layer 5 — Hiring signals (job posting intelligence)
+  linkedinData: string
+  // News signals (categorised)
+  news: NewsItem[]
+  // Hiring signals
   jobSignals: JobSignal[]
-  hiringSnippets: string
-  // Layer 6 — Reviews (intent signals)
-  reviewSnippets: string
+  // Reviews (G2/Glassdoor intent signals)
+  reviewData: string
 }
 
-// ── Serper helpers ────────────────────────────────────────────────────────────
-
-async function serperSearch(query: string, num = 5): Promise<Array<{ title: string; snippet: string; link: string }>> {
+// ── Serper ────────────────────────────────────────────────────────────────────
+async function serper(query: string, num = 6, type: 'search' | 'news' = 'search'): Promise<Array<{title: string; snippet: string; link: string; date?: string; source?: string}>> {
   const key = process.env.SERPER_API_KEY
   if (!key) return []
   try {
+    const body: Record<string, unknown> = { q: query, num }
+    if (type === 'news') body.type = 'news'
     const res = await fetch(SERPER_API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-API-KEY': key },
-      body: JSON.stringify({ q: query, num }),
+      body: JSON.stringify(body),
     })
     const data = await res.json()
-    return data.organic || []
+    return (type === 'news' ? data.news : data.organic) || []
   } catch { return [] }
 }
 
-async function serperNews(query: string, num = 6): Promise<Array<{ title: string; snippet: string; link: string; date?: string; source?: string }>> {
-  const key = process.env.SERPER_API_KEY
-  if (!key) return []
-  try {
-    const res = await fetch(SERPER_API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-KEY': key },
-      body: JSON.stringify({ q: query, num, type: 'news' }),
-    })
-    const data = await res.json()
-    return data.news || []
-  } catch { return [] }
+function fmt(results: Array<{title: string; snippet: string; link: string; date?: string}>): string {
+  if (!results.length) return 'No results found'
+  return results.map(r => `• ${r.title}\n  ${r.snippet}\n  Source: ${r.link}${r.date ? ` (${r.date})` : ''}`).join('\n\n')
 }
 
-function toSnippets(results: Array<{ title: string; snippet: string; link: string }>): string {
-  return results.map(r => `[${r.title}] ${r.snippet} — ${r.link}`).join('\n') || 'No results'
-}
-
-// ── BuiltWith tech stack (verified) ──────────────────────────────────────────
-
-async function fetchBuiltWith(domain: string): Promise<TechTool[]> {
+// ── BuiltWith tech stack ──────────────────────────────────────────────────────
+async function getBuiltWith(domain: string): Promise<{ tools: TechTool[]; byCategory: Record<string, string[]> }> {
   const key = process.env.BUILTWITH_API_KEY
-  if (!key) {
-    // Fallback: parse tech mentions from job postings
-    return []
-  }
+  if (!key) return { tools: [], byCategory: {} }
 
   try {
-    const url = `${BUILTWITH_API}?KEY=${key}&LOOKUP=${domain}`
-    const res = await fetch(url)
-    if (!res.ok) return []
+    const res = await fetch(`${BUILTWITH_API}?KEY=${key}&LOOKUP=${domain}&HIDETEXT=yes`)
+    if (!res.ok) return { tools: [], byCategory: {} }
     const data = await res.json()
 
-    const tools: TechTool[] = []
-    const results = data.Results?.[0]?.Result?.Paths?.[0]?.Technologies || []
+    const technologies = data.Results?.[0]?.Result?.Paths?.[0]?.Technologies || []
 
-    const CATEGORY_MAP: Record<string, string> = {
+    // Map BuiltWith tags to clean categories
+    const CAT_MAP: Record<string, string> = {
       'CRM': 'CRM', 'Customer Relationship Management': 'CRM',
       'Marketing Automation': 'Marketing', 'Email Marketing': 'Marketing',
+      'Email ESP': 'Marketing', 'Marketing': 'Marketing',
       'Analytics': 'Analytics', 'Web Analytics': 'Analytics',
-      'Advertising': 'Advertising', 'Retargeting': 'Advertising',
-      'CDN': 'Infrastructure', 'Hosting': 'Infrastructure', 'SSL': 'Infrastructure',
-      'JavaScript': 'Frontend', 'CSS': 'Frontend', 'UI Frameworks': 'Frontend',
-      'Support': 'Support', 'Helpdesk': 'Support',
-      'Chat': 'Sales', 'Live Chat': 'Sales', 'Lead Generation': 'Sales',
-      'Tag Management': 'Data', 'Data Management': 'Data',
-      'Payment': 'Finance', 'E-commerce': 'E-commerce',
+      'Real Time Analytics': 'Analytics', 'Audience Measurement': 'Analytics',
+      'Advertising Networks': 'Advertising', 'Retargeting': 'Advertising',
+      'Live Chat': 'Sales & Support', 'Chat': 'Sales & Support',
+      'Help Desk': 'Sales & Support', 'Customer Support': 'Sales & Support',
+      'Payment': 'Payments', 'Payment Processors': 'Payments',
+      'Ecommerce': 'E-commerce',
+      'CDN': 'Infrastructure', 'Hosting': 'Infrastructure',
+      'SSL': 'Infrastructure', 'Web Server': 'Infrastructure',
+      'Tag Management': 'Data & Tracking', 'Data Management': 'Data & Tracking',
       'Productivity': 'Productivity', 'Collaboration': 'Productivity',
+      'JavaScript Frameworks': 'Frontend', 'UI Frameworks': 'Frontend',
+      'CSS': 'Frontend',
+      'A/B Testing': 'Optimization', 'Conversion': 'Optimization',
+      'Survey': 'Research', 'Feedback': 'Research',
     }
 
-    for (const tech of results) {
-      const category = CATEGORY_MAP[tech.Tag] || CATEGORY_MAP[tech.Categories?.[0]] || tech.Tag || 'Other'
-      tools.push({
+    const tools: TechTool[] = []
+    const byCategory: Record<string, string[]> = {}
+
+    // Key business tools to highlight (not infrastructure noise)
+    const HIGHLIGHT_TAGS = new Set([
+      'CRM', 'Marketing Automation', 'Email Marketing', 'Email ESP',
+      'Analytics', 'Web Analytics', 'Live Chat', 'Chat', 'Help Desk',
+      'Customer Support', 'Payment', 'Payment Processors', 'A/B Testing',
+      'Tag Management', 'Retargeting', 'Advertising Networks',
+    ])
+
+    for (const tech of technologies) {
+      const rawTag = tech.Tag || tech.Categories?.[0] || 'Other'
+      const category = CAT_MAP[rawTag] || 'Other'
+      if (category === 'Other' && !HIGHLIGHT_TAGS.has(rawTag)) continue // skip noise
+
+      const tool: TechTool = {
         name: tech.Name,
         category,
-        tag: tech.Tag || '',
-        firstDetected: tech.FirstDetected ? new Date(tech.FirstDetected * 1000).toISOString().split('T')[0] : '',
-        lastDetected: tech.LastDetected ? new Date(tech.LastDetected * 1000).toISOString().split('T')[0] : '',
+        firstDetected: tech.FirstDetected
+          ? new Date(tech.FirstDetected * 1000).toISOString().split('T')[0] : '',
+        lastDetected: tech.LastDetected
+          ? new Date(tech.LastDetected * 1000).toISOString().split('T')[0] : '',
         verified: true,
-      })
+      }
+      tools.push(tool)
+      if (!byCategory[category]) byCategory[category] = []
+      byCategory[category].push(tech.Name)
     }
 
-    // Sort by category then name
-    return tools
-      .filter(t => t.name && t.name.length > 0)
-      .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name))
-      .slice(0, 80) // top 80 tools
+    return { tools, byCategory }
   } catch (e) {
     console.error('BuiltWith error:', e)
-    return []
+    return { tools: [], byCategory: {} }
   }
 }
 
-// ── Job posting parser ────────────────────────────────────────────────────────
-
-const TOOL_PATTERNS = [
-  'Salesforce', 'HubSpot', 'Zendesk', 'Intercom', 'Gainsight', 'Totango',
-  'Marketo', 'Pardot', 'Outreach', 'Salesloft', 'Gong', 'Chorus',
-  'Slack', 'Notion', 'Jira', 'Confluence', 'Asana', 'Monday', 'Linear',
-  'Okta', 'OneLogin', 'Workday', 'BambooHR', 'Rippling',
-  'Snowflake', 'Databricks', 'Looker', 'Tableau', 'PowerBI', 'Mixpanel', 'Amplitude',
-  'AWS', 'GCP', 'Azure', 'Vercel', 'Heroku',
-  'Stripe', 'Braintree', 'Zuora', 'Chargebee',
-  'Figma', 'Miro', 'Loom', 'Zoom', 'Google Workspace',
-  'Segment', 'RudderStack', 'mParticle', 'Iterable', 'Braze', 'Customer.io',
-  'ZoomInfo', 'Apollo', 'Lusha', 'Clearbit', 'Clay',
-]
-
-function extractToolsFromText(text: string): string[] {
-  const found: string[] = []
-  const lower = text.toLowerCase()
-  for (const tool of TOOL_PATTERNS) {
-    if (lower.includes(tool.toLowerCase())) found.push(tool)
-  }
-  return Array.from(new Set(found))
-}
-
-function classifyNewsType(title: string, snippet: string): NewsItem['type'] {
-  const text = (title + ' ' + snippet).toLowerCase()
-  if (text.match(/raise|raised|funding|series [a-e]|million|billion|investment|round|investors/)) return 'funding'
-  if (text.match(/appoint|hired|join|ceo|cto|cro|vp|chief|president|leader|founder/)) return 'leadership'
-  if (text.match(/launch|releases|new product|new feature|introduces|announce|partnership|integrat/)) return 'product'
-  if (text.match(/expand|expansion|market|international|global|open|office/)) return 'expansion'
+// ── News classifier ───────────────────────────────────────────────────────────
+function classifyNews(title: string, snippet: string): NewsItem['type'] {
+  const t = (title + ' ' + snippet).toLowerCase()
+  if (t.match(/acqui|merger|acquired|acquisition|buys|bought/)) return 'acquisition'
+  if (t.match(/layoff|laid off|reduct|workforce|cuts jobs|let go/)) return 'layoff'
+  if (t.match(/raise|raised|funding|series [a-e]|million|billion|seed|investment|investors/)) return 'funding'
+  if (t.match(/appoint|hired|joins|new ceo|new cto|new cro|president|chief|founder/)) return 'leadership'
+  if (t.match(/launch|releases|new product|new feature|introduces|unveils|announces/)) return 'product'
+  if (t.match(/expand|expansion|new market|international|opens office|global/)) return 'expansion'
+  if (t.match(/partner|integration|collaborate|alliance/)) return 'partnership'
   return 'press'
 }
 
+// ── Tool mentions in job postings ─────────────────────────────────────────────
+const KNOWN_TOOLS = [
+  'Salesforce','HubSpot','Zendesk','Intercom','Gainsight','Totango','ChurnZero',
+  'Marketo','Pardot','Outreach','Salesloft','Gong','Chorus','Apollo',
+  'Slack','Notion','Jira','Confluence','Asana','Monday','Linear','ClickUp',
+  'Okta','OneLogin','Workday','BambooHR','Rippling','Lattice',
+  'Snowflake','Databricks','Looker','Tableau','PowerBI','Mixpanel','Amplitude','Segment',
+  'AWS','GCP','Azure','Vercel','Heroku','Kubernetes','Docker',
+  'Stripe','Braintree','Zuora','Chargebee','Recurly',
+  'Figma','Miro','Loom','Zoom','Google Workspace','Microsoft 365',
+  'ZoomInfo','Clay','Clearbit','Apollo.io','Lusha',
+  'Twilio','SendGrid','Postmark','Customer.io','Braze','Iterable',
+]
+
+function extractTools(text: string): string[] {
+  const lower = text.toLowerCase()
+  return KNOWN_TOOLS.filter(t => lower.includes(t.toLowerCase()))
+}
+
 // ── MAIN: fetch all company data ──────────────────────────────────────────────
-
 export async function fetchCompanyData(companyName: string, domain?: string): Promise<RawCompanyData> {
-  const resolvedDomain = domain || `${companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`
+  const cleanDomain = domain?.replace('www.', '') ||
+    `${companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`
 
-  // Run all searches in parallel — zero sequential waiting
+  // All searches run in parallel
   const [
-    websiteResults,
-    linkedinCompanyResults,
-    fundingResults,
     crunchbaseResults,
-    newsResults,
     fundingNewsResults,
-    leadershipNewsResults,
+    acquisitionResults,
+    layoffResults,
+    websiteResults,
+    linkedinResults,
+    techNewsResults,
     productNewsResults,
     hiringResults,
     reviewResults,
-    builtWithData,
+    builtWith,
   ] = await Promise.all([
-    serperSearch(`"${companyName}" official site about product overview what we do`, 4),
-    serperSearch(`site:linkedin.com/company "${companyName}"`, 3),
-    serperSearch(`"${companyName}" funding raised investors valuation series`, 5),
-    serperSearch(`site:crunchbase.com "${companyName}" funding`, 4),
-    serperNews(`"${companyName}" news 2025 2026`, 6),
-    serperNews(`"${companyName}" funding raised million 2024 2025 2026`, 4),
-    serperNews(`"${companyName}" new hire appointed executive leadership 2025`, 4),
-    serperNews(`"${companyName}" product launch partnership integration 2025 2026`, 4),
-    serperSearch(`"${companyName}" careers jobs hiring 2025 site:${resolvedDomain} OR site:greenhouse.io OR site:lever.co OR site:ashbyhq.com`, 6),
-    serperSearch(`"${companyName}" review g2 glassdoor alternative 2025`, 4),
-    fetchBuiltWith(resolvedDomain),
+    // Crunchbase — funding, investors, stage
+    serper(`site:crunchbase.com/organization "${companyName}"`, 3),
+
+    // Funding news from multiple sources
+    serper(`"${companyName}" funding raised series investors 2024 2025`, 6, 'news'),
+
+    // Acquisition/M&A news
+    serper(`"${companyName}" acquired acquisition merger 2024 2025`, 4, 'news'),
+
+    // Layoffs
+    serper(`"${companyName}" layoffs laid off employees 2024 2025`, 3, 'news'),
+
+    // Official website
+    serper(`"${companyName}" site:${cleanDomain} OR "${companyName}" about product overview`, 4),
+
+    // LinkedIn company page
+    serper(`site:linkedin.com/company "${companyName}"`, 3),
+
+    // TechCrunch + tech press
+    serper(`"${companyName}" site:techcrunch.com OR site:venturebeat.com 2024 2025`, 5),
+
+    // Product launches
+    serper(`"${companyName}" product launch feature announcement 2025`, 5, 'news'),
+
+    // Job postings for tool signals
+    serper(`"${companyName}" jobs hiring site:greenhouse.io OR site:lever.co OR site:ashbyhq.com OR site:${cleanDomain}/careers`, 5),
+
+    // G2/Glassdoor reviews
+    serper(`"${companyName}" site:g2.com OR site:glassdoor.com review 2025`, 3),
+
+    // BuiltWith tech stack
+    getBuiltWith(cleanDomain),
   ])
 
-  // Find LinkedIn company URL
-  const linkedinCompanyUrl = linkedinCompanyResults
+  // LinkedIn URL
+  const linkedinCompanyUrl = linkedinResults
     .find(r => r.link.includes('linkedin.com/company/') && !r.link.includes('/search'))
     ?.link?.split('?')[0] || null
 
-  // Classify news items
-  const allNewsRaw = [...newsResults, ...fundingNewsResults, ...leadershipNewsResults, ...productNewsResults]
-  const seen = new Set<string>()
-  const recentNews: NewsItem[] = []
+  // Crunchbase URL
+  const crunchbaseUrl = crunchbaseResults
+    .find(r => r.link.includes('crunchbase.com/organization'))
+    ?.link || null
 
-  for (const n of allNewsRaw) {
-    const key = n.title.slice(0, 60)
-    if (seen.has(key)) continue
-    seen.add(key)
-    recentNews.push({
+  // Build news feed — deduplicated, classified
+  const rawNews = [
+    ...fundingNewsResults,
+    ...acquisitionResults,
+    ...layoffResults,
+    ...techNewsResults,
+    ...productNewsResults,
+  ]
+
+  const seenTitles = new Set<string>()
+  const news: NewsItem[] = []
+  for (const n of rawNews) {
+    const key = n.title.slice(0, 50).toLowerCase()
+    if (seenTitles.has(key)) continue
+    seenTitles.add(key)
+    news.push({
       title: n.title,
       snippet: n.snippet,
       url: n.link,
-      source: n.source || new URL(n.link).hostname.replace('www.', ''),
+      source: n.source || (() => { try { return new URL(n.link).hostname.replace('www.','') } catch { return '' } })(),
       date: n.date || 'recent',
-      type: classifyNewsType(n.title, n.snippet),
+      type: classifyNews(n.title, n.snippet),
     })
   }
 
-  // Parse job signals
+  // Job signals
   const jobSignals: JobSignal[] = []
-  for (const j of hiringResults.slice(0, 4)) {
-    const tools = extractToolsFromText(j.title + ' ' + j.snippet)
+  for (const j of hiringResults) {
+    const tools = extractTools(j.title + ' ' + j.snippet)
     const signals: string[] = []
-    const text = (j.title + ' ' + j.snippet).toLowerCase()
-    if (text.includes('head of') || text.includes('vp of') || text.includes('director')) signals.push('Senior hire — budget authority signal')
-    if (text.includes('revenue ops') || text.includes('revops')) signals.push('RevOps investment — systems build-out underway')
-    if (text.includes('enterprise')) signals.push('Enterprise motion — upmarket push')
-    if (text.includes('scale') || text.includes('growth')) signals.push('Scaling phase — new tools likely being evaluated')
-    if (tools.length > 0) signals.push(`Uses: ${tools.join(', ')}`)
-
-    if (tools.length > 0 || signals.length > 0) {
+    const t = (j.title + ' ' + j.snippet).toLowerCase()
+    if (t.includes('head of') || t.includes('vp ') || t.includes('director')) signals.push('Senior hire — budget authority')
+    if (t.includes('revops') || t.includes('revenue ops')) signals.push('RevOps build-out — systems investment likely')
+    if (t.includes('enterprise')) signals.push('Enterprise motion — upmarket push')
+    if (t.includes('scale') || t.includes('growth')) signals.push('Scaling phase — tool evaluation likely')
+    if (tools.length) signals.push(`Stack signals: ${tools.join(', ')}`)
+    if (tools.length || signals.length) {
       jobSignals.push({
-        title: j.title.replace(/\s*[-|]\s*.*/g, '').trim(),
+        title: j.title.replace(/\s*[-|]\s*.*/,'').trim(),
         tools_mentioned: tools,
         signals,
         url: j.link,
-        date: 'recent',
       })
     }
   }
 
-  // Build tech stack raw summary for AI context
-  const techByCategory: Record<string, string[]> = {}
-  for (const t of builtWithData) {
-    if (!techByCategory[t.category]) techByCategory[t.category] = []
-    techByCategory[t.category].push(t.name)
-  }
-  const techStackRaw = Object.entries(techByCategory)
-    .map(([cat, tools]) => `${cat}: ${tools.join(', ')}`)
-    .join('\n') || 'BuiltWith data not available'
-
   return {
     companyName,
-    domain: resolvedDomain,
-    techStack: builtWithData,
-    techStackRaw,
-    websiteSnippets: toSnippets(websiteResults),
-    linkedinSnippets: toSnippets(linkedinCompanyResults),
+    domain: cleanDomain,
+    crunchbaseUrl,
+    crunchbaseSnippet: fmt(crunchbaseResults),
+    fundingData: fmt(fundingNewsResults),
+    techStack: builtWith.tools,
+    techByCategory: builtWith.byCategory,
+    websiteData: fmt(websiteResults),
     linkedinCompanyUrl,
-    fundingSnippets: toSnippets(fundingResults),
-    crunchbaseSnippets: toSnippets(crunchbaseResults),
-    recentNews: recentNews.slice(0, 10),
+    linkedinData: fmt(linkedinResults),
+    news: news.slice(0, 12),
     jobSignals,
-    hiringSnippets: toSnippets(hiringResults),
-    reviewSnippets: toSnippets(reviewResults),
+    reviewData: fmt(reviewResults),
   }
 }
