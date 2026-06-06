@@ -7,12 +7,18 @@ const INDUSTRIES = [
   'AI / ML','Cybersecurity','HealthTech','E-commerce','EdTech',
   'RevOps','Sales Tech','Customer Success','Legal Tech','PropTech',
 ]
-const COMPANY_SIZES = ['1–50 (Startup)','51–200 (Small)','201–500 (Mid)','501–1000 (Growth)','1000+ (Enterprise)']
+const COMPANY_SIZES = [
+  '1–50 (Startup)','51–200 (Small)','201–500 (Mid)',
+  '501–1000 (Growth)','1000+ (Enterprise)',
+]
 
-const STEPS = [
-  { id: 1, label: 'About you' },
-  { id: 2, label: 'What you sell' },
-  { id: 3, label: 'Preferences' },
+const PRODUCT_EXAMPLES = [
+  'AI-powered sales intelligence platform for B2B SaaS teams',
+  'Revenue operations software for scaling startups',
+  'Customer success platform for SaaS companies',
+  'Sales engagement and outreach automation tool',
+  'Contract management and CLM software',
+  'HR and people management platform',
 ]
 
 export default function SetupPage() {
@@ -20,20 +26,50 @@ export default function SetupPage() {
   const [step, setStep] = useState(1)
   const [loading, setLoading] = useState(false)
   const [loadingMsg, setLoadingMsg] = useState('')
+  const [aiGenerating, setAiGenerating] = useState(false)
   const [form, setForm] = useState({
-    name: '', email: '', company_name: '', product_description: '',
-    target_industries: [] as string[], target_company_sizes: [] as string[],
-    icp_notes: '', notify_daily: true,
+    name: '', email: '', company_name: '',
+    product_description: '',
+    target_industries: [] as string[],
+    target_company_sizes: [] as string[],
+    icp_notes: '',
+    notify_daily: true,
   })
 
   const toggle = (arr: string[], item: string) =>
     arr.includes(item) ? arr.filter(i => i !== item) : [...arr, item]
 
+  // AI-assisted ICP generation
+  const generateICP = async () => {
+    if (!form.product_description.trim()) return
+    setAiGenerating(true)
+    try {
+      const res = await fetch('/api/generate-icp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ product_description: form.product_description }),
+      })
+      const data = await res.json()
+      if (data.industries) {
+        setForm(f => ({
+          ...f,
+          target_industries: data.industries || f.target_industries,
+          target_company_sizes: data.sizes || f.target_company_sizes,
+          icp_notes: data.icp_notes || f.icp_notes,
+        }))
+        setStep(3)
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setAiGenerating(false)
+    }
+  }
+
   const handleSubmit = async () => {
     setLoading(true)
     setLoadingMsg('Creating your sales profile...')
     try {
-      // Save profile
       const res = await fetch('/api/profiles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -45,8 +81,8 @@ export default function SetupPage() {
       localStorage.setItem('gtm_profile_id', data.profile.id)
       localStorage.setItem('gtm_profile', JSON.stringify(data.profile))
 
-      // Phase 1: discover company names only (fast)
-      setLoadingMsg('Finding your best-fit accounts...')
+      // Phase 1: discover companies
+      setLoadingMsg('Finding best-fit accounts based on your ICP...')
       const discoverRes = await fetch('/api/discover', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -55,7 +91,7 @@ export default function SetupPage() {
       const discoverData = await discoverRes.json()
       const companies = discoverData.companies || []
 
-      // Phase 2: research each company individually
+      // Phase 2: research each
       for (let i = 0; i < companies.length; i++) {
         const c = companies[i]
         if (c.status === 'existing') continue
@@ -64,12 +100,18 @@ export default function SetupPage() {
           await fetch('/api/research', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ company_name: c.name, profile_id: data.profile.id, prospect_id: c.prospect_id }),
+            body: JSON.stringify({
+              company_name: c.name,
+              profile_id: data.profile.id,
+              prospect_id: c.prospect_id,
+            }),
           })
-        } catch (e) { console.error(`Failed to research ${c.name}`, e) }
+        } catch (e) { console.error(`Failed: ${c.name}`, e) }
+        // Small delay between companies to avoid rate limiting
+        if (i < companies.length - 1) await new Promise(r => setTimeout(r, 5000))
       }
 
-      setLoadingMsg('Ready! Taking you to your dashboard...')
+      setLoadingMsg('Ready!')
       await new Promise(r => setTimeout(r, 500))
       router.push('/dashboard')
     } catch (e) {
@@ -84,18 +126,18 @@ export default function SetupPage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: '#0a0a0f' }}>
-        <div className="text-center max-w-sm">
+        <div className="text-center max-w-sm px-6">
           <div className="w-12 h-12 border-2 rounded-full mx-auto mb-6 animate-spin"
             style={{ borderColor: '#2a2a38', borderTopColor: '#6c63ff' }} />
-          <h2 className="font-display text-xl font-bold text-white mb-2">{loadingMsg}</h2>
+          <h2 className="text-xl font-bold text-white mb-2">{loadingMsg}</h2>
           <p className="text-sm" style={{ color: '#6b6b80' }}>
-            Researching companies, finding contacts, and surfacing buying signals...
+            Running live research — pulling scoops from TechCrunch, Crunchbase, funding news...
           </p>
           <div className="mt-6 space-y-2">
-            {['Identifying best-fit accounts', 'Running GTM research', 'Finding key contacts', 'Validating LinkedIn profiles', 'Surfacing buying signals'].map((s, i) => (
-              <div key={i} className="flex items-center gap-3 text-left px-4 py-2 rounded-lg"
+            {['Finding AI-first companies matching your ICP','Scraping TechCrunch & Crunchbase','Pulling funding & leadership signals','Validating LinkedIn contacts','Generating personalized outreach'].map((s, i) => (
+              <div key={i} className="flex items-center gap-3 px-4 py-2 rounded-lg text-left"
                 style={{ background: '#1a1a24' }}>
-                <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: '#6c63ff' }} />
+                <div className="w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0" style={{ background: '#6c63ff' }} />
                 <span className="text-xs" style={{ color: '#9ca3af' }}>{s}</span>
               </div>
             ))}
@@ -107,55 +149,63 @@ export default function SetupPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6" style={{ background: '#0a0a0f' }}>
-      <div className="w-full max-w-xl">
-        <div className="mb-8 text-center">
+      <div className="w-full max-w-lg">
+
+        {/* Header */}
+        <div className="text-center mb-8">
           <div className="inline-flex items-center gap-2 mb-4">
             <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: '#6c63ff' }}>
               <span className="text-white text-sm font-bold">G</span>
             </div>
-            <span className="font-display font-bold text-xl text-white">GTM Intel</span>
+            <span className="font-bold text-xl text-white">GTM Intel</span>
           </div>
-          <h1 className="font-display text-3xl font-bold text-white mb-2">Set up your workspace</h1>
-          <p className="text-sm" style={{ color: '#6b6b80' }}>We'll find and research your best-fit accounts automatically.</p>
+          <h1 className="text-3xl font-bold text-white mb-2">Set up your workspace</h1>
+          <p className="text-sm" style={{ color: '#6b6b80' }}>
+            AI will find and research your best-fit accounts automatically.
+          </p>
         </div>
 
-        {/* Step indicator */}
+        {/* Step indicators */}
         <div className="flex items-center gap-2 mb-8">
-          {STEPS.map((s, i) => (
-            <div key={s.id} className="flex items-center gap-2 flex-1">
+          {[1, 2, 3].map((s, i) => (
+            <div key={s} className="flex items-center gap-2 flex-1">
               <div className="flex items-center gap-2">
                 <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-all"
-                  style={{ background: step >= s.id ? '#6c63ff' : '#1a1a24', color: step >= s.id ? 'white' : '#6b6b80' }}>
-                  {step > s.id ? '✓' : s.id}
+                  style={{ background: step >= s ? '#6c63ff' : '#1a1a24', color: step >= s ? 'white' : '#6b6b80' }}>
+                  {step > s ? '✓' : s}
                 </div>
-                <span className="text-xs hidden sm:block" style={{ color: step === s.id ? '#e8e8f0' : '#6b6b80' }}>{s.label}</span>
+                <span className="text-xs hidden sm:block" style={{ color: step === s ? '#e8e8f0' : '#6b6b80' }}>
+                  {['About you', 'What you sell', 'ICP preferences'][i]}
+                </span>
               </div>
-              {i < STEPS.length - 1 && (
-                <div className="flex-1 h-px mx-2" style={{ background: step > s.id ? '#6c63ff' : '#2a2a38' }} />
-              )}
+              {i < 2 && <div className="flex-1 h-px mx-2" style={{ background: step > s ? '#6c63ff' : '#2a2a38' }} />}
             </div>
           ))}
         </div>
 
-        {/* Step 1 */}
+        {/* Step 1: About you */}
         {step === 1 && (
-          <div className="animate-in space-y-4">
-            <h2 className="font-display text-xl font-bold text-white mb-4">About you</h2>
+          <div className="space-y-4">
+            <h2 className="text-xl font-bold text-white mb-4">About you</h2>
             {[
-              { label: 'Your name', key: 'name', placeholder: 'e.g. Sri' },
-              { label: 'Work email', key: 'email', placeholder: 'you@company.com' },
-              { label: 'Your company', key: 'company_name', placeholder: 'e.g. Salesforce' },
+              { label: 'Your name', key: 'name', placeholder: 'e.g. John Smith', type: 'text' },
+              { label: 'Work email', key: 'email', placeholder: 'you@company.com', type: 'email' },
+              { label: 'Your company (optional)', key: 'company_name', placeholder: 'e.g. Acme Inc', type: 'text' },
             ].map(f => (
               <div key={f.key}>
                 <label className="block text-xs font-mono uppercase tracking-widest mb-2" style={{ color: '#6b6b80' }}>{f.label}</label>
-                <input type={f.key === 'email' ? 'email' : 'text'} placeholder={f.placeholder}
+                <input
+                  type={f.type}
+                  placeholder={f.placeholder}
                   value={form[f.key as keyof typeof form] as string}
                   onChange={e => setForm({ ...form, [f.key]: e.target.value })}
                   className="w-full px-4 py-3 rounded-lg text-sm outline-none"
-                  style={{ background: '#1a1a24', border: '1px solid #2a2a38', color: '#e8e8f0' }} />
+                  style={{ background: '#1a1a24', border: '1px solid #2a2a38', color: '#e8e8f0' }}
+                />
               </div>
             ))}
-            <button onClick={() => setStep(2)} disabled={!form.name || !form.email}
+            <button onClick={() => setStep(2)}
+              disabled={!form.name || !form.email}
               className="w-full mt-2 py-3 rounded-lg font-semibold text-sm transition-all"
               style={{ background: '#6c63ff', color: 'white', opacity: (!form.name || !form.email) ? 0.5 : 1 }}>
               Continue →
@@ -163,24 +213,84 @@ export default function SetupPage() {
           </div>
         )}
 
-        {/* Step 2 */}
+        {/* Step 2: What you sell */}
         {step === 2 && (
-          <div className="animate-in space-y-4">
-            <h2 className="font-display text-xl font-bold text-white mb-4">What do you sell?</h2>
+          <div className="space-y-4">
+            <h2 className="text-xl font-bold text-white mb-1">What do you sell?</h2>
+            <p className="text-xs mb-4" style={{ color: '#6b6b80' }}>
+              Be specific — AI uses this to find companies, generate research briefs, and write outreach.
+            </p>
+
+            {/* Quick examples */}
             <div>
-              <label className="block text-xs font-mono uppercase tracking-widest mb-2" style={{ color: '#6b6b80' }}>Product description</label>
-              <textarea rows={4} placeholder="e.g. I sell a revenue intelligence platform that helps enterprise sales teams improve forecast accuracy..."
+              <p className="text-xs font-mono uppercase tracking-wider mb-2" style={{ color: '#6b6b80' }}>Quick examples — click to use</p>
+              <div className="flex flex-wrap gap-2">
+                {PRODUCT_EXAMPLES.map(ex => (
+                  <button key={ex}
+                    onClick={() => setForm({ ...form, product_description: ex })}
+                    className="text-xs px-3 py-1.5 rounded-full transition-all"
+                    style={{
+                      background: form.product_description === ex ? '#6c63ff20' : 'transparent',
+                      border: `1px solid ${form.product_description === ex ? '#6c63ff' : '#2a2a38'}`,
+                      color: form.product_description === ex ? '#6c63ff' : '#6b6b80',
+                    }}>
+                    {ex}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-mono uppercase tracking-widest mb-2" style={{ color: '#6b6b80' }}>Or describe in your own words</label>
+              <textarea rows={4}
+                placeholder="e.g. I sell an AI-powered GTM intelligence platform that helps B2B sales teams research target accounts faster, find verified contacts, and generate personalized outreach..."
                 value={form.product_description}
                 onChange={e => setForm({ ...form, product_description: e.target.value })}
                 className="w-full px-4 py-3 rounded-lg text-sm outline-none resize-none"
-                style={{ background: '#1a1a24', border: '1px solid #2a2a38', color: '#e8e8f0' }} />
-              <p className="text-xs mt-1" style={{ color: '#6b6b80' }}>Be specific — this tailors every research brief and outreach message.</p>
+                style={{ background: '#1a1a24', border: '1px solid #2a2a38', color: '#e8e8f0' }}
+              />
             </div>
+
+            <div className="flex gap-3">
+              <button onClick={() => setStep(1)}
+                className="px-6 py-3 rounded-lg text-sm"
+                style={{ background: '#1a1a24', color: '#6b6b80' }}>← Back</button>
+              <button
+                onClick={generateICP}
+                disabled={!form.product_description || aiGenerating}
+                className="flex-1 py-3 rounded-lg font-semibold text-sm flex items-center justify-center gap-2"
+                style={{ background: '#6c63ff', color: 'white', opacity: !form.product_description ? 0.5 : 1 }}>
+                {aiGenerating
+                  ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> AI generating ICP...</>
+                  : '✨ Generate ICP with AI →'}
+              </button>
+            </div>
+            <button onClick={() => setStep(3)}
+              className="w-full py-2 text-xs"
+              style={{ color: '#6b6b80' }}>
+              Set preferences manually instead →
+            </button>
+          </div>
+        )}
+
+        {/* Step 3: ICP preferences */}
+        {step === 3 && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="text-xl font-bold text-white">Target account preferences</h2>
+              {form.target_industries.length > 0 && (
+                <span className="text-xs px-2 py-1 rounded-full" style={{ background: '#16a34a20', color: '#16a34a' }}>
+                  ✓ AI-generated
+                </span>
+              )}
+            </div>
+
             <div>
               <label className="block text-xs font-mono uppercase tracking-widest mb-2" style={{ color: '#6b6b80' }}>Target industries</label>
               <div className="flex flex-wrap gap-2">
                 {INDUSTRIES.map(ind => (
-                  <button key={ind} onClick={() => setForm({ ...form, target_industries: toggle(form.target_industries, ind) })}
+                  <button key={ind}
+                    onClick={() => setForm({ ...form, target_industries: toggle(form.target_industries, ind) })}
                     className="px-3 py-1.5 rounded-full text-xs font-medium transition-all"
                     style={{
                       background: form.target_industries.includes(ind) ? '#6c63ff' : 'transparent',
@@ -190,26 +300,13 @@ export default function SetupPage() {
                 ))}
               </div>
             </div>
-            <div className="flex gap-3 mt-2">
-              <button onClick={() => setStep(1)} className="px-6 py-3 rounded-lg text-sm" style={{ background: '#1a1a24', color: '#6b6b80' }}>← Back</button>
-              <button onClick={() => setStep(3)} disabled={!form.product_description || !form.target_industries.length}
-                className="flex-1 py-3 rounded-lg font-semibold text-sm"
-                style={{ background: '#6c63ff', color: 'white', opacity: (!form.product_description || !form.target_industries.length) ? 0.5 : 1 }}>
-                Continue →
-              </button>
-            </div>
-          </div>
-        )}
 
-        {/* Step 3 */}
-        {step === 3 && (
-          <div className="animate-in space-y-4">
-            <h2 className="font-display text-xl font-bold text-white mb-4">Target account preferences</h2>
             <div>
               <label className="block text-xs font-mono uppercase tracking-widest mb-2" style={{ color: '#6b6b80' }}>Company sizes</label>
               <div className="flex flex-wrap gap-2">
                 {COMPANY_SIZES.map(size => (
-                  <button key={size} onClick={() => setForm({ ...form, target_company_sizes: toggle(form.target_company_sizes, size) })}
+                  <button key={size}
+                    onClick={() => setForm({ ...form, target_company_sizes: toggle(form.target_company_sizes, size) })}
                     className="px-3 py-1.5 rounded-full text-xs font-medium transition-all"
                     style={{
                       background: form.target_company_sizes.includes(size) ? '#6c63ff' : 'transparent',
@@ -219,18 +316,23 @@ export default function SetupPage() {
                 ))}
               </div>
             </div>
+
             <div>
-              <label className="block text-xs font-mono uppercase tracking-widest mb-2" style={{ color: '#6b6b80' }}>ICP notes (optional)</label>
-              <textarea rows={3} placeholder="e.g. Focus on companies raising Series B+, hiring RevOps, using Salesforce..."
+              <label className="block text-xs font-mono uppercase tracking-widest mb-2" style={{ color: '#6b6b80' }}>ICP notes</label>
+              <textarea rows={3}
+                placeholder="e.g. Focus on companies raising Series B+, hiring in sales/RevOps, using Salesforce..."
                 value={form.icp_notes}
                 onChange={e => setForm({ ...form, icp_notes: e.target.value })}
                 className="w-full px-3 py-2.5 rounded-lg text-sm outline-none resize-none"
-                style={{ background: '#1a1a24', border: '1px solid #2a2a38', color: '#e8e8f0' }} />
+                style={{ background: '#1a1a24', border: '1px solid #2a2a38', color: '#e8e8f0' }}
+              />
             </div>
-            <div className="flex items-center justify-between p-4 rounded-xl" style={{ background: '#1a1a24', border: '1px solid #2a2a38' }}>
+
+            <div className="flex items-center justify-between p-4 rounded-xl"
+              style={{ background: '#1a1a24', border: '1px solid #2a2a38' }}>
               <div>
                 <p className="font-medium text-white text-sm">Daily email digest</p>
-                <p className="text-xs mt-0.5" style={{ color: '#6b6b80' }}>New signals every morning at 7am</p>
+                <p className="text-xs mt-0.5" style={{ color: '#6b6b80' }}>New signals every morning</p>
               </div>
               <button onClick={() => setForm({ ...form, notify_daily: !form.notify_daily })}
                 className="w-12 h-6 rounded-full transition-all relative flex-shrink-0"
@@ -239,16 +341,21 @@ export default function SetupPage() {
                   style={{ left: form.notify_daily ? '26px' : '2px' }} />
               </button>
             </div>
+
             <div className="flex gap-3">
-              <button onClick={() => setStep(2)} className="px-6 py-3 rounded-lg text-sm" style={{ background: '#1a1a24', color: '#6b6b80' }}>← Back</button>
+              <button onClick={() => setStep(2)}
+                className="px-6 py-3 rounded-lg text-sm"
+                style={{ background: '#1a1a24', color: '#6b6b80' }}>← Back</button>
               <button onClick={handleSubmit}
+                disabled={!form.target_industries.length}
                 className="flex-1 py-3 rounded-lg font-semibold text-sm flex items-center justify-center gap-2"
-                style={{ background: '#6c63ff', color: 'white' }}>
+                style={{ background: '#6c63ff', color: 'white', opacity: !form.target_industries.length ? 0.5 : 1 }}>
                 🚀 Find my accounts →
               </button>
             </div>
           </div>
         )}
+
       </div>
     </div>
   )
