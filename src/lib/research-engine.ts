@@ -1,21 +1,72 @@
 /**
- * GTM Intel Research Engine v8
- * 4-step structured AI pipeline — AI only sees clean JSON, never raw web text
+ * GTM Intel Research Engine — Claude API with native web_search
  *
- * Step 1: fetchCompanyData() — parallel source fetching (no AI)
- * Step 2: extractSnapshot()  — facts only (temp 0)
- * Step 3: generateInsights() — sales analysis (temp 0.2)
- * Step 4: writeOutreach()    — personalized copy (temp 0.3)
- * Step 5: findContacts()     — LinkedIn validated contacts
+ * Architecture:
+ * Step 1: Claude searches the web natively (no Serper needed for research)
+ * Step 2: Claude extracts structured company snapshot
+ * Step 3: Claude generates sales insights from snapshot
+ * Step 4: Claude writes personalized outreach
+ * Step 5: Serper validates LinkedIn contacts
+ *
+ * Model: claude-haiku-4-5-20251001 (~$0.01 per full research run)
  */
 
-import { fetchCompanyData, type RawCompanyData, type TechTool, type JobSignal } from './data-layer'
-
+const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages'
 const GROQ_API = 'https://api.groq.com/openai/v1/chat/completions'
+const SERPER_API = 'https://google.serper.dev/search'
 
-async function groq(prompt: string, maxTokens = 1000, temp = 0.1): Promise<string> {
+// ── Claude API call with web_search tool ─────────────────────────────────────
+async function callClaude(
+  prompt: string,
+  maxTokens = 2000,
+  useWebSearch = false
+): Promise<string> {
+  const key = process.env.ANTHROPIC_API_KEY
+  if (!key || key === 'placeholder_add_later') {
+    // Fall back to Groq if no Claude key
+    return callGroq(prompt, maxTokens)
+  }
+
+  const body: Record<string, unknown> = {
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: maxTokens,
+    messages: [{ role: 'user', content: prompt }],
+  }
+
+  if (useWebSearch) {
+    body.tools = [{ type: 'web_search_20250305', name: 'web_search' }]
+  }
+
+  const res = await fetch(ANTHROPIC_API, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Claude API error ${res.status}: ${err}`)
+  }
+
+  const data = await res.json()
+
+  // Extract text from content blocks (may include tool_use and tool_result blocks)
+  const text = (data.content || [])
+    .filter((b: { type: string; text?: string }) => b.type === 'text')
+    .map((b: { type: string; text: string }) => b.text)
+    .join('')
+
+  return text
+}
+
+// ── Groq fallback ─────────────────────────────────────────────────────────────
+async function callGroq(prompt: string, maxTokens = 2000): Promise<string> {
   const key = process.env.GROQ_API_KEY
-  if (!key) throw new Error('GROQ_API_KEY not configured')
+  if (!key) throw new Error('No AI backend configured')
   const res = await fetch(GROQ_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
@@ -23,36 +74,61 @@ async function groq(prompt: string, maxTokens = 1000, temp = 0.1): Promise<strin
       model: 'llama-3.3-70b-versatile',
       messages: [{ role: 'user', content: prompt }],
       max_tokens: maxTokens,
-      temperature: temp,
+      temperature: 0.2,
     }),
   })
-  if (!res.ok) { const e = await res.text(); throw new Error(`Groq ${res.status}: ${e}`) }
+  if (!res.ok) { const e = await res.text(); throw new Error(`Groq error: ${e}`) }
   const d = await res.json()
   return d.choices?.[0]?.message?.content || ''
 }
 
 function parseJSON<T>(raw: string, fallback: T): T {
   try {
-    const clean = raw.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim()
-    const m = clean.match(/(\{[\s\S]*\}|\[[\s\S]*\])/)
-    if (!m) return fallback
-    return JSON.parse(m[0])
+    const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+    const match = clean.match(/(\{[\s\S]*\}|\[[\s\S]*\])/)
+    if (!match) return fallback
+    return JSON.parse(match[0])
   } catch { return fallback }
 }
 
+// ── Serper search (still used for discovery + LinkedIn) ───────────────────────
+async function serper(
+  query: string,
+  num = 6,
+  type: 'search' | 'news' = 'search'
+): Promise<Array<{ title: string; snippet: string; link: string; date?: string; source?: string }>> {
+  const key = process.env.SERPER_API_KEY
+  if (!key) return []
+  try {
+    const body: Record<string, unknown> = { q: query, num }
+    if (type === 'news') body.type = 'news'
+    const res = await fetch(SERPER_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-KEY': key },
+      body: JSON.stringify(body),
+    })
+    const data = await res.json()
+    return (type === 'news' ? data.news : data.organic) || []
+  } catch { return [] }
+}
+
 // ── LinkedIn validator ────────────────────────────────────────────────────────
-async function validateLinkedIn(name: string, company: string, title: string): Promise<{url:string|null;verified:boolean}> {
+async function validateLinkedIn(
+  name: string,
+  company: string,
+  title: string
+): Promise<{ url: string | null; verified: boolean }> {
   const key = process.env.SERPER_API_KEY
   if (!key) return { url: null, verified: false }
   const parts = name.toLowerCase().split(' ').filter(p => p.length > 1)
   const first = parts[0] || ''
-  const last = parts[parts.length-1] || ''
+  const last = parts[parts.length - 1] || ''
   for (const q of [
     `site:linkedin.com/in "${name}" "${company}"`,
-    `site:linkedin.com/in "${first} ${last}" "${company}" "${title.split(' ').slice(0,3).join(' ')}"`,
+    `site:linkedin.com/in "${first} ${last}" "${company}" "${title.split(' ').slice(0, 3).join(' ')}"`,
   ]) {
     try {
-      const res = await fetch('https://google.serper.dev/search', {
+      const res = await fetch(SERPER_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-API-KEY': key },
         body: JSON.stringify({ q, num: 3 }),
@@ -64,8 +140,8 @@ async function validateLinkedIn(name: string, company: string, title: string): P
         const slug = r.link.split('linkedin.com/in/')[1]?.split('/')[0]?.split('?')[0]?.toLowerCase() || ''
         if (!slug || slug.length < 3) continue
         let score = 0
-        if (slug.includes(first.slice(0,4))) score += 35
-        if (slug.includes(last.slice(0,4))) score += 35
+        if (slug.includes(first.slice(0, 4))) score += 35
+        if (slug.includes(last.slice(0, 4))) score += 35
         if (r.snippet?.toLowerCase().includes(first)) score += 15
         if (r.snippet?.toLowerCase().includes(company.toLowerCase().split(' ')[0])) score += 15
         if (score >= 70) return { url: r.link.split('?')[0], verified: true }
@@ -76,221 +152,258 @@ async function validateLinkedIn(name: string, company: string, title: string): P
   return { url: null, verified: false }
 }
 
-// ── STEP 2: Extract snapshot (temp 0 — facts only) ────────────────────────────
+// ── STEP 1+2: Claude researches company with web search + extracts snapshot ───
 interface Snapshot {
   name: string; domain: string; industry: string; category: string
   hq: string; founded: string; employee_count: string; stage: string
   total_funding: string; latest_round: string; investors: string
-  description: string; linkedin_url: string; website: string
-  icp: string; business_model: string; priority_score: number
+  description: string; linkedin_url: string; icp: string
+  business_model: string; priority_score: number
 }
 
-async function extractSnapshot(data: RawCompanyData): Promise<Snapshot> {
-  const prompt = `Extract ONLY explicitly stated facts. Use "Unknown" if not found. No inference.
+async function researchAndExtract(companyName: string): Promise<Snapshot> {
+  const prompt = `Research the company "${companyName}" thoroughly.
 
-Company: "${data.companyName}"
+Search for:
+1. Company overview, product, what they do
+2. Funding history, investors, latest round amount and date
+3. Employee count and HQ location
+4. Recent news (last 12 months)
+5. Their LinkedIn company page URL
 
-CRUNCHBASE: ${data.crunchbaseSnippet}
-FUNDING NEWS: ${data.fundingData}
-WEBSITE: ${data.websiteData}
-LINKEDIN: ${data.linkedinData}
-LinkedIn URL: ${data.linkedinCompanyUrl || 'not found'}
-Crunchbase URL: ${data.crunchbaseUrl || 'not found'}
+After researching, extract ONLY confirmed facts into this exact JSON structure.
+Use "Unknown" for any field you cannot confirm.
 
-Return ONLY JSON:
-{"name":"${data.companyName}","domain":"${data.domain}","industry":"from sources","category":"specific product category","hq":"city, country","founded":"year","employee_count":"count or range","stage":"Seed|Series A|Series B|Series C|Growth|Public|Unknown","total_funding":"amount","latest_round":"round+amount+date","investors":"names","description":"2 sentences from website","linkedin_url":"${data.linkedinCompanyUrl||''}","website":"${data.domain}","icp":"who they sell to","business_model":"SaaS|Usage-based|Enterprise|Unknown","priority_score":7}`
+Return ONLY this JSON, no explanation:
+{
+  "name": "exact company name",
+  "domain": "domain.com",
+  "industry": "industry",
+  "category": "specific category e.g. AI CRM, Sales Intelligence",
+  "hq": "city, country",
+  "founded": "year or Unknown",
+  "employee_count": "number or range",
+  "stage": "Seed|Series A|Series B|Series C|Growth|Public|Unknown",
+  "total_funding": "total raised e.g. $45M or Unknown",
+  "latest_round": "e.g. Series B $30M January 2025 or Unknown",
+  "investors": "key investors or Unknown",
+  "description": "2 sentences: what they do and who they serve",
+  "linkedin_url": "https://www.linkedin.com/company/slug or Unknown",
+  "icp": "who they sell to",
+  "business_model": "SaaS|Usage-based|Enterprise|Freemium|Unknown",
+  "priority_score": 7
+}`
 
-  const raw = await groq(prompt, 600, 0.0)
+  const raw = await callClaude(prompt, 1500, true)
   return parseJSON<Snapshot>(raw, {
-    name: data.companyName, domain: data.domain, industry: 'Unknown', category: 'Unknown',
+    name: companyName, domain: '', industry: 'Unknown', category: 'Unknown',
     hq: 'Unknown', founded: 'Unknown', employee_count: 'Unknown', stage: 'Unknown',
     total_funding: 'Unknown', latest_round: 'Unknown', investors: 'Unknown',
-    description: '', linkedin_url: data.linkedinCompanyUrl || '', website: data.domain,
-    icp: 'Unknown', business_model: 'Unknown', priority_score: 5,
+    description: '', linkedin_url: '', icp: 'Unknown',
+    business_model: 'Unknown', priority_score: 5,
   })
 }
 
-// ── STEP 3: Generate scoops from structured news (temp 0.1) ───────────────────
+// ── STEP 3: Claude finds real scoops with web search ─────────────────────────
 interface GTMScoop {
   type: string; headline: string; detail: string
   why_it_matters: string; source: string; source_url: string; date: string
 }
 
-async function generateScoops(snapshot: Snapshot, data: RawCompanyData, salesDescription: string): Promise<GTMScoop[]> {
-  if (!data.news.length && !data.jobSignals.length) return []
+async function findScoops(
+  snapshot: Snapshot,
+  salesDescription: string
+): Promise<GTMScoop[]> {
+  const prompt = `Search for the latest news and buying signals for "${snapshot.name}".
 
-  const newsText = data.news.slice(0, 10).map(n =>
-    `[${n.type.toUpperCase()}] "${n.title}" — ${n.snippet} | Source: ${n.source} | Date: ${n.date} | URL: ${n.url}`
-  ).join('\n')
+Look for:
+- Funding rounds, acquisitions, mergers
+- Layoffs or headcount reductions  
+- Leadership changes (new CEO, CTO, VP hires)
+- Product launches or major feature releases
+- Partnerships or integrations
+- Expansion to new markets
+- Any strategic announcements in 2024-2025
 
-  const jobText = data.jobSignals.slice(0, 4).map(j =>
-    `[HIRING] ${j.title} | Tools: ${j.tools_mentioned.join(', ')} | Signals: ${j.signals.join(', ')}`
-  ).join('\n')
+For each signal found, explain why it's relevant to a sales rep selling: "${salesDescription}"
 
-  const prompt = `You are a sales signal analyst. Extract buying signals from REAL news data below.
-
-Sales rep sells: "${salesDescription}"
-Company: ${snapshot.name} (${snapshot.category}, ${snapshot.stage})
-
-REAL NEWS DATA — extract signals from these exact articles:
-${newsText || 'No news found'}
-
-HIRING SIGNALS:
-${jobText || 'No hiring data found'}
-
-RULES:
-- Use ONLY information explicitly in the data above
-- source_url MUST be the exact URL from the data (the link after "Source:")
-- source MUST be the publication name from the data
-- date MUST be the exact date from the data
-- headline must reference specific facts (amounts, names, dates)
-- detail must contain specifics (e.g. "$38M Series B led by GV" not "raised funding")
-
-Return ONLY JSON array ([] if no real signals with URLs):
+Return ONLY a JSON array of scoops with real source URLs you found:
 [{
-  "type": "funding|acquisition|layoff|leadership_change|hiring_spike|product_launch|expansion|partnership|press",
-  "headline": "specific headline with exact details from source",
-  "detail": "2-3 sentences with exact specifics (amounts, names, dates) from the article",
-  "summary": "one sentence plain summary of what happened",
-  "why_it_matters": "one sentence: specific buying opportunity for this sales rep",
-  "source": "exact publication name from data",
-  "source_url": "exact URL from the data — REQUIRED",
-  "date": "exact date from data"
+  "type": "funding|acquisition|layoff|leadership_change|product_launch|partnership|expansion|press",
+  "headline": "specific headline with real details (amounts, names, dates)",
+  "detail": "2-3 sentences with exact specifics from the source",
+  "why_it_matters": "one sentence: specific buying opportunity for the sales rep",
+  "source": "publication name",
+  "source_url": "actual URL of the article",
+  "date": "date of the news"
 }]
-Max 8 scoops. Every scoop MUST have a source_url.`
 
-  const raw = await groq(prompt, 1500, 0.1)
+Only include scoops with real source URLs. Return [] if nothing significant found.`
+
+  const raw = await callClaude(prompt, 2000, true)
   return parseJSON<GTMScoop[]>(raw, [])
 }
 
-// ── STEP 3b: Generate sales insights (temp 0.2) ───────────────────────────────
+// ── STEP 4: Claude generates sales insights ───────────────────────────────────
 interface SalesInsights {
   why_relevant: string
   executive_summary: string
-  pain_points: Array<{title:string;description:string;severity:'high'|'medium'|'low'}>
+  pain_points: Array<{ title: string; description: string; severity: 'high' | 'medium' | 'low' }>
   discovery_questions: string[]
-  outreach_angles: Array<{title:string;description:string}>
-  icp_fit_score: number
-  icp_fit_reasoning: string
+  outreach_angles: Array<{ title: string; description: string }>
+  tech_stack_hints: Array<{ category: string; tool: string; confidence: string; verified: boolean }>
 }
 
 async function generateInsights(
   snapshot: Snapshot,
-  techByCategory: Record<string, string[]>,
   scoops: GTMScoop[],
-  jobSignals: JobSignal[],
   salesDescription: string
 ): Promise<SalesInsights> {
-  const techText = Object.entries(techByCategory)
-    .map(([cat, tools]) => `${cat}: ${tools.join(', ')}`).join('\n') || 'No BuiltWith data'
+  const scoop_summary = scoops.slice(0, 4)
+    .map(s => `[${s.type}] ${s.headline} — ${s.why_it_matters}`)
+    .join('\n')
 
-  const allJobTools = jobSignals.flatMap(j => j.tools_mentioned)
-  const uniqueJobTools = allJobTools.filter((t, i) => allJobTools.indexOf(t) === i)
-
-  const topScoops = scoops.slice(0, 4).map(s => `[${s.type}] ${s.headline}: ${s.why_it_matters}`).join('\n')
-
-  const prompt = `Sales strategist generating insights from STRUCTURED company data.
+  const prompt = `You are a senior sales strategist. Generate insights based on this structured data.
 
 SELLING: "${salesDescription}"
 
-COMPANY SNAPSHOT:
-${JSON.stringify(snapshot, null, 2)}
-
-VERIFIED TECH STACK (BuiltWith):
-${techText}
-
-TOOLS IN JOB POSTINGS:
-${uniqueJobTools.join(', ') || 'None found'}
+COMPANY:
+- Name: ${snapshot.name}
+- Category: ${snapshot.category}
+- Stage: ${snapshot.stage} | Funding: ${snapshot.total_funding}
+- Employees: ${snapshot.employee_count} | HQ: ${snapshot.hq}
+- ICP: ${snapshot.icp}
+- Description: ${snapshot.description}
 
 TOP SIGNALS:
-${topScoops || 'No signals yet'}
+${scoop_summary || 'No recent signals found'}
 
-Generate insights based on this specific data. Return ONLY JSON:
+Search for ${snapshot.name}'s tech stack — what tools do they use (CRM, analytics, support, marketing)?
+
+Generate insights specific to this company. Return ONLY JSON:
 {
-  "why_relevant": "2 specific sentences on why THIS company needs what the rep sells, based on their actual stage/tech/signals",
-  "executive_summary": "3 sentences: what they do + their current moment + the sales opportunity",
-  "pain_points": [{"title":"specific pain from their data","description":"evidence from tech stack or signals","severity":"high|medium|low"}],
-  "discovery_questions": ["question referencing something specific from their stack or news"],
-  "outreach_angles": [{"title":"angle","description":"specific angle from their actual data"}],
-  "icp_fit_score": 7,
-  "icp_fit_reasoning": "specific reasoning based on their actual data"
+  "why_relevant": "2 specific sentences on why this company needs what the rep sells RIGHT NOW based on their stage/signals",
+  "executive_summary": "3 sentences: what they do + their current moment + the buying opportunity",
+  "pain_points": [
+    {"title": "specific pain tied to their stage/signals", "description": "evidence-based", "severity": "high|medium|low"}
+  ],
+  "discovery_questions": [
+    "question referencing something specific about their company or signals"
+  ],
+  "outreach_angles": [
+    {"title": "angle title", "description": "specific angle referencing their actual data"}
+  ],
+  "tech_stack_hints": [
+    {"category": "CRM|Analytics|Marketing|Support|Data|Payments", "tool": "tool name", "confidence": "high|medium|low", "verified": false}
+  ]
 }`
 
-  const raw = await groq(prompt, 1200, 0.2)
+  const raw = await callClaude(prompt, 1500, true)
   return parseJSON<SalesInsights>(raw, {
-    why_relevant:'', executive_summary:'', pain_points:[],
-    discovery_questions:[], outreach_angles:[], icp_fit_score:5, icp_fit_reasoning:'',
+    why_relevant: '', executive_summary: '', pain_points: [],
+    discovery_questions: [], outreach_angles: [], tech_stack_hints: [],
   })
 }
 
-// ── STEP 4: Write outreach (temp 0.3) ─────────────────────────────────────────
+// ── STEP 5: Claude writes outreach ───────────────────────────────────────────
 interface OutreachKit {
   cold_email: string; linkedin_message: string; call_script: string
-  objections: Array<{objection:string;counter:string}>
+  objections: Array<{ objection: string; counter: string }>
 }
 
-async function writeOutreach(snapshot: Snapshot, scoops: GTMScoop[], insights: SalesInsights, salesDescription: string): Promise<OutreachKit> {
-  const topScoop = scoops[0] ? `${scoops[0].headline} (${scoops[0].date}) — ${scoops[0].why_it_matters}` : insights.why_relevant
-  const angle = insights.outreach_angles[0] ? `${insights.outreach_angles[0].title}: ${insights.outreach_angles[0].description}` : ''
+async function writeOutreach(
+  snapshot: Snapshot,
+  scoops: GTMScoop[],
+  insights: SalesInsights,
+  salesDescription: string
+): Promise<OutreachKit> {
+  const topScoop = scoops[0]
+    ? `${scoops[0].headline} (${scoops[0].date})`
+    : insights.why_relevant
 
-  const prompt = `Expert SDR writing outreach. Be specific — reference REAL signals below.
+  const angle = insights.outreach_angles[0]
+    ? `${insights.outreach_angles[0].title}: ${insights.outreach_angles[0].description}`
+    : insights.why_relevant
+
+  const prompt = `Write highly personalized sales outreach. Be specific — reference real signals.
 
 SELLING: "${salesDescription}"
-TARGET: ${snapshot.name} — ${snapshot.description}
-STAGE: ${snapshot.stage} | EMPLOYEES: ${snapshot.employee_count} | HQ: ${snapshot.hq}
+TARGET COMPANY: ${snapshot.name}
+DESCRIPTION: ${snapshot.description}
+STAGE: ${snapshot.stage} | EMPLOYEES: ${snapshot.employee_count}
 
 TOP SIGNAL TO REFERENCE:
 ${topScoop}
 
-ANGLE:
-${angle || insights.why_relevant}
+KEY ANGLE:
+${angle}
 
-Rules: reference a specific real signal. No generic phrases. Subject line under 8 words.
+Rules:
+- Reference the specific signal above — not generic praise
+- Cold email subject line under 8 words
+- LinkedIn message under 60 words
+- Call script: one specific observation, one question, then pause
+- Objections should be specific to their stage and situation
+
 Return ONLY JSON:
 {
-  "cold_email": "Subject: [under 8 words]\\n\\nHi [First Name],\\n\\n[2-3 sentences: specific signal + how product helps + CTA]\\n\\n[Name]",
-  "linkedin_message": "Hi [Name] — [50 words max, one specific observation, clear ask]",
-  "call_script": "Hi [Name], [Rep] from [Company]. [One specific observation]. Quick question — [discovery question]?",
-  "objections": [{"objection":"likely objection","counter":"specific counter using their data"}]
+  "cold_email": "Subject: [under 8 words]\\n\\nHi [First Name],\\n\\n[2-3 sentences: specific signal + connection to product + soft CTA]\\n\\n[Name]",
+  "linkedin_message": "Hi [Name] — [50 words max, reference one real signal, clear ask]",
+  "call_script": "Hi [Name], [Rep] from [Company]. [One specific observation from signals]. Quick question — [discovery question]? [Pause]",
+  "objections": [
+    {"objection": "likely objection from this company's perspective", "counter": "specific counter using their situation"}
+  ]
 }`
 
-  const raw = await groq(prompt, 800, 0.3)
-  return parseJSON<OutreachKit>(raw, { cold_email:'', linkedin_message:'', call_script:'', objections:[] })
+  const raw = await callClaude(prompt, 1000, false)
+  return parseJSON<OutreachKit>(raw, {
+    cold_email: '', linkedin_message: '', call_script: '', objections: [],
+  })
 }
 
-// ── STEP 5: Find and validate contacts ────────────────────────────────────────
+// ── STEP 6: Find contacts ─────────────────────────────────────────────────────
 interface Contact {
-  name:string; title:string; department:string
-  linkedin_url:string|null; linkedin_verified:boolean
-  email_guess:string; email_pattern:string; email_confidence:'high'|'medium'|'low'
-  role_in_deal:'champion'|'blocker'|'influencer'|'evaluator'
-  outreach_message:string
+  name: string; title: string; department: string
+  linkedin_url: string | null; linkedin_verified: boolean
+  email_guess: string; email_pattern: string
+  email_confidence: 'high' | 'medium' | 'low'
+  role_in_deal: 'champion' | 'blocker' | 'influencer' | 'evaluator'
+  outreach_message: string
 }
 
-async function findContacts(snapshot: Snapshot, insights: SalesInsights, salesDescription: string): Promise<Contact[]> {
+async function findContacts(
+  snapshot: Snapshot,
+  insights: SalesInsights,
+  salesDescription: string
+): Promise<Contact[]> {
   const key = process.env.SERPER_API_KEY
   if (!key) return []
 
   const [r1, r2] = await Promise.all([
-    fetch('https://google.serper.dev/search', {
-      method:'POST',
-      headers:{'Content-Type':'application/json','X-API-KEY':key},
-      body: JSON.stringify({ q: `site:linkedin.com/in "${snapshot.name}" VP OR Head OR Director OR CRO OR CMO OR "Chief"`, num: 5 }),
+    fetch(SERPER_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-KEY': key },
+      body: JSON.stringify({
+        q: `site:linkedin.com/in "${snapshot.name}" VP OR Head OR Director OR CRO OR CMO OR Chief`,
+        num: 5,
+      }),
     }).then(r => r.json()).then(d => d.organic || []).catch(() => []),
-    fetch('https://google.serper.dev/search', {
-      method:'POST',
-      headers:{'Content-Type':'application/json','X-API-KEY':key},
-      body: JSON.stringify({ q: `"${snapshot.name}" leadership team executives 2025 site:linkedin.com`, num: 5 }),
+    fetch(SERPER_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-KEY': key },
+      body: JSON.stringify({
+        q: `"${snapshot.name}" leadership executives team site:linkedin.com`,
+        num: 5,
+      }),
     }).then(r => r.json()).then(d => d.organic || []).catch(() => []),
   ])
 
   const found = [...r1, ...r2]
-    .filter((r: {link:string}) => r.link?.includes('linkedin.com/in/') && !r.link.includes('/in/search'))
-    .map((r: {title:string;snippet:string;link:string}) => ({
-      name: r.title?.split(' - ')[0]?.replace(' | LinkedIn','')?.trim() || '',
+    .filter((r: { link: string }) => r.link?.includes('linkedin.com/in/') && !r.link.includes('/in/search'))
+    .map((r: { title: string; snippet: string; link: string }) => ({
+      name: r.title?.split(' - ')[0]?.replace(' | LinkedIn', '')?.trim() || '',
       title: r.title?.split(' - ')[1]?.trim() || '',
       url: r.link,
-      snippet: r.snippet || '',
     }))
     .filter(p => p.name.length > 2 && p.name.length < 50)
     .slice(0, 6)
@@ -298,22 +411,31 @@ async function findContacts(snapshot: Snapshot, insights: SalesInsights, salesDe
   if (!found.length) return []
 
   const domain = snapshot.domain
-  const contactList = found.map((p,i) => `${i+1}. ${p.name} — ${p.title}`).join('\n')
+  const contactList = found.map((p, i) => `${i + 1}. ${p.name} — ${p.title}`).join('\n')
 
-  const prompt = `Company: ${snapshot.name} (${snapshot.category}, ${snapshot.stage}, ${snapshot.employee_count} employees)
+  const prompt = `Company: ${snapshot.name} (${snapshot.category}, ${snapshot.stage})
 Domain: ${domain}
 Rep sells: "${salesDescription}"
-Insight: ${insights.why_relevant}
+Key insight: ${insights.why_relevant}
 
-Contacts found:
+Contacts found at ${snapshot.name}:
 ${contactList}
 
-Assign role and write 3-line personalized message for each.
+For each contact: assign their role in the buying decision and write a personalized 3-line outreach message.
 Return ONLY JSON array:
-[{"name":"exact","title":"exact","department":"Sales|RevOps|CS|Product|Engineering|Finance|IT|Marketing|Executive","email_guess":"firstname@${domain}","email_pattern":"first@${domain}","email_confidence":"high|medium|low","role_in_deal":"champion|blocker|influencer|evaluator","outreach_message":"Hi [name], 3 lines referencing ${snapshot.name} insight"}]`
+[{
+  "name": "exact name",
+  "title": "exact title",
+  "department": "Sales|RevOps|CS|Product|Engineering|Finance|IT|Marketing|Executive",
+  "email_guess": "firstname@${domain}",
+  "email_pattern": "first@${domain}",
+  "email_confidence": "high|medium|low",
+  "role_in_deal": "champion|blocker|influencer|evaluator",
+  "outreach_message": "Hi [name], [3 lines specific to ${snapshot.name} and what the rep sells]"
+}]`
 
-  const raw = await groq(prompt, 800, 0.2)
-  const enriched = parseJSON<Array<Omit<Contact,'linkedin_url'|'linkedin_verified'>>>(raw, [])
+  const raw = await callClaude(prompt, 800, false)
+  const enriched = parseJSON<Array<Omit<Contact, 'linkedin_url' | 'linkedin_verified'>>>(raw, [])
 
   const validated = await Promise.all(
     enriched.slice(0, 6).map(async (c, i) => {
@@ -321,8 +443,9 @@ Return ONLY JSON array:
       if (foundPerson?.url?.includes('linkedin.com/in/')) {
         const slug = foundPerson.url.split('linkedin.com/in/')[1]?.split('/')[0]?.split('?')[0]?.toLowerCase() || ''
         const parts = c.name.toLowerCase().split(' ')
-        const score = (slug.includes(parts[0]?.slice(0,4)||'') ? 35 : 0) +
-                      (slug.includes(parts[parts.length-1]?.slice(0,4)||'') ? 35 : 0)
+        const score =
+          (slug.includes(parts[0]?.slice(0, 4) || '') ? 35 : 0) +
+          (slug.includes(parts[parts.length - 1]?.slice(0, 4) || '') ? 35 : 0)
         if (score >= 70) return { ...c, linkedin_url: foundPerson.url.split('?')[0], linkedin_verified: true }
         if (score >= 35) return { ...c, linkedin_url: foundPerson.url.split('?')[0], linkedin_verified: false }
       }
@@ -335,54 +458,44 @@ Return ONLY JSON array:
 }
 
 // ── MAIN PIPELINE ─────────────────────────────────────────────────────────────
-export async function runFullResearch(companyName: string, salesDescription: string, targetIndustries: string[]) {
+export async function runFullResearch(
+  companyName: string,
+  salesDescription: string,
+  targetIndustries: string[]
+) {
   try {
-    // Step 1: Fetch all data (no AI)
-    const data = await fetchCompanyData(companyName)
+    const hasClaude = process.env.ANTHROPIC_API_KEY &&
+      process.env.ANTHROPIC_API_KEY !== 'placeholder_add_later'
 
-    // Step 2: Extract facts (temp 0)
-    const snapshot = await extractSnapshot(data)
+    console.log(`Research engine: ${hasClaude ? 'Claude' : 'Groq'} for ${companyName}`)
 
-    // Steps 3+3b+4: Run scoops, insights, contacts in parallel then outreach
-    const [scoops, insights] = await Promise.all([
-      generateScoops(snapshot, data, salesDescription),
-      generateInsights(snapshot, data.techByCategory, [], data.jobSignals, salesDescription),
-    ])
+    // Steps 1+2: Research and extract snapshot
+    const snapshot = await researchAndExtract(companyName)
 
-    const [outreach, contacts] = await Promise.all([
-      writeOutreach(snapshot, scoops, insights, salesDescription),
-      findContacts(snapshot, insights, salesDescription),
-    ])
+    // Step 3: find scoops with web search
+    const scoops: GTMScoop[] = await findScoops(snapshot, salesDescription)
+    // Step 4: generate insights from scoops
+    const insights: SalesInsights = await generateInsights(snapshot, scoops, salesDescription)
 
-    // Build tech_stack for display
-    const techStackDisplay = Object.entries(data.techByCategory).length > 0
-      ? Object.entries(data.techByCategory).map(([cat, tools]) => ({
-          category: cat, tool: tools.join(', '), confidence: 'high' as const,
-          verified: true, source: 'BuiltWith',
+    // Step 5: Outreach (needs insights)
+    const outreach = await writeOutreach(snapshot, scoops, insights, salesDescription)
+
+    // Step 6: Contacts
+    const contacts = await findContacts(snapshot, insights, salesDescription)
+
+    // Build tech stack from insights
+    const techStack = insights.tech_stack_hints.length > 0
+      ? insights.tech_stack_hints.map(t => ({
+          category: t.category,
+          tool: t.tool,
+          confidence: t.confidence as 'high' | 'medium' | 'low',
+          verified: t.verified,
+          source: t.verified ? 'Verified' : 'AI research',
         }))
-      : data.jobSignals.flatMap(j => j.tools_mentioned)
-          .filter((t, i, arr) => arr.indexOf(t) === i)
-          .map(t => ({ category: 'Job postings', tool: t, confidence: 'medium' as const, verified: false, source: 'Hiring data' }))
+      : []
 
-    // All signals merged — AI scoops first, then raw news as fallback
-    const aiScoopUrls = new Set(scoops.map(s => s.source_url).filter(Boolean))
-    const allScoops = [
-      ...scoops,
-      // Add raw news items not already covered by AI scoops
-      ...data.news
-        .filter(n => !aiScoopUrls.has(n.url) && !scoops.some(s => s.headline.toLowerCase().includes(n.title.slice(0,25).toLowerCase())))
-        .map(n => ({
-          type: n.type,
-          headline: n.title,
-          detail: n.snippet,
-          summary: n.snippet,
-          why_it_matters: '',
-          source: n.source,
-          source_url: n.url,
-          date: n.date,
-        })),
-    ].filter(s => s.source_url) // only show scoops with real source URLs
-    .slice(0, 12)
+    // All signals
+    const allScoops = scoops.filter(s => s.source_url)
 
     return {
       company: {
@@ -392,15 +505,13 @@ export async function runFullResearch(companyName: string, salesDescription: str
         size: snapshot.employee_count,
         stage: snapshot.stage,
         hq: snapshot.hq,
-        linkedin_url: snapshot.linkedin_url,
+        linkedin_url: snapshot.linkedin_url !== 'Unknown' ? snapshot.linkedin_url : null,
         description: snapshot.description,
         founded: snapshot.founded,
         total_funding: snapshot.total_funding,
         latest_round: snapshot.latest_round,
         investors: snapshot.investors,
-        priority_score: insights.icp_fit_score || snapshot.priority_score,
-        icp_fit_reasoning: insights.icp_fit_reasoning,
-        crunchbase_url: data.crunchbaseUrl,
+        priority_score: snapshot.priority_score,
       },
       executive_summary: insights.executive_summary || snapshot.description,
       business_model: snapshot.business_model,
@@ -408,8 +519,14 @@ export async function runFullResearch(companyName: string, salesDescription: str
       why_relevant: insights.why_relevant,
       gtm_scoops: allScoops,
       pain_points: insights.pain_points,
-      tech_stack: techStackDisplay,
-      buying_signals: scoops.map(s => ({ signal: s.headline, why_it_matters: s.why_it_matters, source: s.source, source_url: s.source_url, date: s.date })),
+      tech_stack: techStack,
+      buying_signals: allScoops.map(s => ({
+        signal: s.headline,
+        why_it_matters: s.why_it_matters,
+        source: s.source,
+        source_url: s.source_url,
+        date: s.date,
+      })),
       discovery_questions: insights.discovery_questions,
       outreach_angles: insights.outreach_angles,
       cold_email: outreach.cold_email,
@@ -417,11 +534,15 @@ export async function runFullResearch(companyName: string, salesDescription: str
       call_script: outreach.call_script,
       objections: outreach.objections,
       contacts,
-      recent_news: data.news.map(n => ({
-        title: n.title, summary: n.snippet, source_name: n.source,
-        source_url: n.url, date: n.date, signal_type: n.type,
+      recent_news: allScoops.map(s => ({
+        title: s.headline,
+        summary: s.detail,
+        source_name: s.source,
+        source_url: s.source_url,
+        date: s.date,
+        signal_type: s.type,
       })),
-      job_signals: data.jobSignals,
+      job_signals: [],
     }
   } catch (err) {
     console.error('Research pipeline error:', err)
@@ -430,78 +551,97 @@ export async function runFullResearch(companyName: string, salesDescription: str
 }
 
 // ── DISCOVER ──────────────────────────────────────────────────────────────────
-export async function discoverCompanies(salesDescription: string, targetIndustries: string[], targetSizes: string[], icpNotes: string, count = 5): Promise<string[]> {
-  const ind = targetIndustries.slice(0,2).join(' ')
+export async function discoverCompanies(
+  salesDescription: string,
+  targetIndustries: string[],
+  targetSizes: string[],
+  icpNotes: string,
+  count = 5
+): Promise<string[]> {
+  const ind = targetIndustries.slice(0, 2).join(' ')
   const key = process.env.SERPER_API_KEY
   if (!key) return []
 
   const [s1, s2, s3] = await Promise.all([
-    fetch('https://google.serper.dev/search', { method:'POST', headers:{'Content-Type':'application/json','X-API-KEY':key}, body: JSON.stringify({q:`AI SaaS startup ${ind} funding raised 2025 2026`,num:10,type:'news'}) }).then(r=>r.json()).then(d=>d.news||[]).catch(()=>[]),
-    fetch('https://google.serper.dev/search', { method:'POST', headers:{'Content-Type':'application/json','X-API-KEY':key}, body: JSON.stringify({q:`AI-first ${ind} company product launch 2025`,num:8,type:'news'}) }).then(r=>r.json()).then(d=>d.news||[]).catch(()=>[]),
-    fetch('https://google.serper.dev/search', { method:'POST', headers:{'Content-Type':'application/json','X-API-KEY':key}, body: JSON.stringify({q:`top AI ${ind} startups raised funding 2025`,num:8}) }).then(r=>r.json()).then(d=>d.organic||[]).catch(()=>[]),
+    fetch(SERPER_API, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-KEY': key }, body: JSON.stringify({ q: `AI SaaS startup ${ind} funding raised 2025 2026`, num: 10, type: 'news' }) }).then(r => r.json()).then(d => d.news || []).catch(() => []),
+    fetch(SERPER_API, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-KEY': key }, body: JSON.stringify({ q: `AI-first ${ind} company product launch 2025`, num: 8, type: 'news' }) }).then(r => r.json()).then(d => d.news || []).catch(() => []),
+    fetch(SERPER_API, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-KEY': key }, body: JSON.stringify({ q: `top AI ${ind} startups raised funding 2025`, num: 8 }) }).then(r => r.json()).then(d => d.organic || []).catch(() => []),
   ])
 
-  const skip = new Set(['techcrunch','crunchbase','linkedin','forbes','bloomberg','medium','github','reddit','g2','glassdoor','notion','google','microsoft','salesforce','hubspot'])
+  const skip = new Set(['techcrunch', 'crunchbase', 'linkedin', 'forbes', 'bloomberg', 'medium', 'github', 'reddit', 'g2', 'glassdoor'])
   const seen = new Set<string>()
   const candidates: string[] = []
 
   for (const r of [...s1, ...s2, ...s3]) {
     try {
-      const domain = new URL(r.link).hostname.replace('www.','')
+      const domain = new URL(r.link).hostname.replace('www.', '')
       const base = domain.split('.')[0]
       if (skip.has(base) || seen.has(domain)) continue
       seen.add(domain)
-      const name = r.title?.replace(/\s*[-|–:]\s*.*/g,'')?.replace(/\s*(Inc|LLC|Ltd|Corp)\.?$/gi,'')?.trim()
-      if (name && name.length > 2 && name.length < 50) { candidates.push(name); if (candidates.length >= 15) break }
+      const name = r.title?.replace(/\s*[-|–:]\s*.*/g, '')?.replace(/\s*(Inc|LLC|Ltd|Corp)\.?$/gi, '')?.trim()
+      if (name && name.length > 2 && name.length < 50) {
+        candidates.push(name)
+        if (candidates.length >= 15) break
+      }
     } catch { continue }
   }
 
   if (!candidates.length) return []
 
-  const groqKey = process.env.GROQ_API_KEY
-  if (!groqKey) return candidates.slice(0, count)
+  const prompt = `Rep sells: "${salesDescription.slice(0, 150)}" to ${ind}. ICP: ${icpNotes || 'AI-first SaaS'}
+Pick ${count} best AI-first companies (not media/aggregators):
+${candidates.map((c, i) => `${i + 1}. ${c}`).join('\n')}
+Return ONLY: ["Company A","Company B"]`
 
-  const res = await fetch(GROQ_API, {
-    method:'POST',
-    headers:{'Content-Type':'application/json','Authorization':`Bearer ${groqKey}`},
-    body: JSON.stringify({
-      model:'llama-3.3-70b-versatile',
-      messages:[{role:'user',content:`Rep sells: "${salesDescription.slice(0,150)}" to ${ind}. ICP: ${icpNotes||'AI-first SaaS'}
-Pick ${count} best AI-first companies (not media/aggregators/agencies):
-${candidates.map((c,i)=>`${i+1}. ${c}`).join('\n')}
-Return ONLY: ["Company A","Company B"]`}],
-      max_tokens:150, temperature:0.0,
-    }),
-  })
-  const d = await res.json()
-  return parseJSON<string[]>(d.choices?.[0]?.message?.content||'', candidates.slice(0,count))
+  const raw = await callClaude(prompt, 200, false)
+  return parseJSON<string[]>(raw, candidates.slice(0, count))
 }
 
 // ── SIGNAL REFRESH ────────────────────────────────────────────────────────────
-export async function refreshSignals(companyName: string, domain: string, salesDescription: string, lastCheckedAt: string|null) {
-  const key = process.env.SERPER_API_KEY
-  if (!key) return []
-  const since = lastCheckedAt ? `since ${new Date(lastCheckedAt).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}` : 'in the last 7 days'
-  const [news, funding] = await Promise.all([
-    fetch('https://google.serper.dev/search',{method:'POST',headers:{'Content-Type':'application/json','X-API-KEY':key},body:JSON.stringify({q:`"${companyName}" news ${since}`,num:5,type:'news'})}).then(r=>r.json()).then(d=>d.news||[]).catch(()=>[]),
-    fetch('https://google.serper.dev/search',{method:'POST',headers:{'Content-Type':'application/json','X-API-KEY':key},body:JSON.stringify({q:`"${companyName}" funding raised acquisition ${since}`,num:4,type:'news'})}).then(r=>r.json()).then(d=>d.news||[]).catch(()=>[]),
-  ])
-  const combined = [...news,...funding].map((n:{title:string;snippet:string;link:string;date?:string;source?:string}) => `[${n.title}] ${n.snippet} (${n.source||''}, ${n.date||''}, ${n.link})`).join('\n')
-  if (!combined.trim()) return []
-  const groqKey = process.env.GROQ_API_KEY
-  if (!groqKey) return []
-  const res = await fetch(GROQ_API,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${groqKey}`},body:JSON.stringify({model:'llama-3.3-70b-versatile',messages:[{role:'user',content:`Rep sells: "${salesDescription}". Extract new signals ${since} for "${companyName}" from: ${combined}\nReturn ONLY JSON array: [{"signal_type":"funding|hiring|product_launch|leadership_change|acquisition|layoff|expansion|press|other","title":"headline","summary":"2 sentences + why it matters for sales","source_name":"pub","source_url":"url","source_verified":true,"signal_date":"YYYY-MM-DD"}]\nReturn [] if nothing new.`}],max_tokens:800,temperature:0.0})})
-  const d = await res.json()
-  return parseJSON<SignalResult[]>(d.choices?.[0]?.message?.content||'', [])
+export async function refreshSignals(
+  companyName: string,
+  domain: string,
+  salesDescription: string,
+  lastCheckedAt: string | null
+) {
+  const since = lastCheckedAt
+    ? `since ${new Date(lastCheckedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`
+    : 'in the last 7 days'
+
+  const prompt = `Search for new signals for "${companyName}" (${domain}) ${since}.
+
+Look for: funding, acquisitions, layoffs, leadership changes, product launches, partnerships.
+
+Rep sells: "${salesDescription}"
+
+Return ONLY JSON array ([] if nothing new):
+[{
+  "signal_type": "funding|acquisition|layoff|leadership_change|product_launch|partnership|expansion|press|other",
+  "title": "specific headline",
+  "summary": "2 sentences: what happened + why it matters for sales",
+  "source_name": "publication",
+  "source_url": "actual URL",
+  "source_verified": true,
+  "signal_date": "YYYY-MM-DD"
+}]`
+
+  const raw = await callClaude(prompt, 1000, true)
+  return parseJSON<SignalResult[]>(raw, [])
 }
 
-export async function generateDigestSummary(salesDescription: string, signalsByProspect: Array<{company:string;signals:SignalResult[]}>) {
-  const key = process.env.GROQ_API_KEY
-  if (!key) return ''
-  const text = signalsByProspect.map(p => `${p.company}: ${p.signals.map(s=>`[${s.signal_type}] ${s.title}`).join(', ')}`).join('\n')
-  const res = await fetch(GROQ_API,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify({model:'llama-3.3-70b-versatile',messages:[{role:'user',content:`Coach for rep selling "${salesDescription}". Signals: ${text}. 3-4 sentence briefing: top signal, who to call first, why. Plain text.`}],max_tokens:200,temperature:0.2})})
-  const d = await res.json()
-  return d.choices?.[0]?.message?.content || ''
+export async function generateDigestSummary(
+  salesDescription: string,
+  signalsByProspect: Array<{ company: string; signals: SignalResult[] }>
+) {
+  const text = signalsByProspect
+    .map(p => `${p.company}: ${p.signals.map(s => `[${s.signal_type}] ${s.title}`).join(', ')}`)
+    .join('\n')
+
+  const prompt = `Sales coach for rep selling "${salesDescription}".
+Signals today: ${text}
+Write 3-4 sentence briefing: top signal to act on, which company to call first, why. Plain text only.`
+
+  return callClaude(prompt, 300, false)
 }
 
 export interface SignalResult {
