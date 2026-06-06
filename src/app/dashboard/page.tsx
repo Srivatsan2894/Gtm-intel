@@ -155,10 +155,16 @@ export default function Dashboard() {
         <div className="p-4" style={{borderBottom:'1px solid #1a1a24'}}>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{background:'#6c63ff'}}>
-                <span className="text-white text-xs font-bold">G</span>
+              <div className="flex items-center gap-2">
+                <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect width="28" height="28" rx="7" fill="#6c63ff"/>
+                  <path d="M7 14C7 10.134 10.134 7 14 7C17.866 7 21 10.134 21 14" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+                  <path d="M14 14L18.5 9.5" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+                  <circle cx="14" cy="14" r="2.5" fill="white"/>
+                  <path d="M7 14C7 17.866 10.134 21 14 21C17.866 21 21 17.866 21 14" stroke="rgba(255,255,255,0.4)" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+                <span className="font-bold text-white text-sm tracking-tight">GTM Intel</span>
               </div>
-              <span className="font-display font-bold text-white">GTM Intel</span>
             </div>
             {newSignals > 0 && (
               <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{background:'#6c63ff',color:'white'}}>
@@ -305,7 +311,7 @@ export default function Dashboard() {
                   {selected.domain && (
                     <a href={`https://${selected.domain}`} target="_blank" rel="noreferrer"
                       className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg"
-                      style={{background:'#1a1a24',color:'#9ca3af',border:'1px solid #2a2a38'}}>
+                      style={{background:'#1a1a24',color:'#6c63ff',border:'1px solid #2a2a38'}}>
                       🌐 {selected.domain} ↗
                     </a>
                   )}
