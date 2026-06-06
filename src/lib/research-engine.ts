@@ -238,7 +238,7 @@ async function generateInsights(
 
   const topScoops = scoops.slice(0,3).map(s => `[${s.type}] ${s.headline}: ${s.why_it_matters}`).join('\n')
 
-  const hiringSignals = data.generalNews
+  const hiringSignals = data.allNews
     .filter(n => n.title.toLowerCase().includes('hire') || n.title.toLowerCase().includes('appoint') || n.title.toLowerCase().includes('joins'))
     .slice(0,3)
     .map(n => `- ${n.title}`)
@@ -417,7 +417,7 @@ export async function runFullResearch(
 
     // Step 1: fetch all data (website + OpenExplorer + news) in parallel
     const data = await fetchCompanyData(companyName)
-    console.log(`Website fetched: ${data.webData.fetchSuccess} | Domain: ${data.resolvedDomain} | News: ${data.allNews.length} | Tech: ${data.techStack.length}`)
+    console.log(`Website fetched: ${data.website.fetchSuccess} | Domain: ${data.domain} | News: ${data.allNews.length} | Tech: ${data.techStack.length}`)
 
     // Step 2: extract snapshot from real website content
     const snapshot = await extractSnapshot(data)
