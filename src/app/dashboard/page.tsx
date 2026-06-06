@@ -156,14 +156,17 @@ export default function Dashboard() {
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-2">
-                <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <rect width="28" height="28" rx="7" fill="#6c63ff"/>
-                  <path d="M7 14C7 10.134 10.134 7 14 7C17.866 7 21 10.134 21 14" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-                  <path d="M14 14L18.5 9.5" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-                  <circle cx="14" cy="14" r="2.5" fill="white"/>
-                  <path d="M7 14C7 17.866 10.134 21 14 21C17.866 21 21 17.866 21 14" stroke="rgba(255,255,255,0.4)" strokeWidth="2" strokeLinecap="round"/>
+                <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect width="32" height="32" rx="8" fill="#6c63ff"/>
+                  <path d="M8 16C8 11.582 11.582 8 16 8C20.418 8 24 11.582 24 16" stroke="white" strokeWidth="2.5" strokeLinecap="round"/>
+                  <path d="M16 16L21 11" stroke="white" strokeWidth="2.5" strokeLinecap="round"/>
+                  <circle cx="16" cy="16" r="2.5" fill="white"/>
+                  <path d="M8 16C8 20.418 11.582 24 16 24C20.418 24 24 20.418 24 16" stroke="rgba(255,255,255,0.35)" strokeWidth="2.5" strokeLinecap="round"/>
                 </svg>
-                <span className="font-bold text-white text-sm tracking-tight">GTM Intel</span>
+                <div>
+                  <p className="font-bold text-white leading-none" style={{fontSize:'13px',letterSpacing:'-0.2px'}}>GTM Intelligence</p>
+                  <p className="leading-none mt-0.5" style={{color:'rgba(255,255,255,0.4)',fontSize:'9px',letterSpacing:'0.08em'}}>POWERED BY AI</p>
+                </div>
               </div>
             </div>
             {newSignals > 0 && (

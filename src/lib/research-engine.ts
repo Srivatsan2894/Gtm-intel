@@ -67,7 +67,7 @@ function parseJSON<T>(raw: string, fallback: T): T {
   } catch { return fallback }
 }
 
-// ── LinkedIn validator ────────────────────────────────────────────────────────
+// ── LinkedIn validator (kept for optional use) ───────────────────────────────
 async function validateLinkedIn(name: string, company: string, title: string): Promise<{url: string|null; verified: boolean}> {
   const key = process.env.SERPER_API_KEY
   if (!key) return { url: null, verified: false }
@@ -103,59 +103,88 @@ async function validateLinkedIn(name: string, company: string, title: string): P
 
 // ── PROMPT A: Extract snapshot from website + crunchbase ─────────────────────
 async function extractSnapshot(data: RawCompanyData) {
+  // Build rich website context from all scraped pages
   const websiteContext = [
-    data.webData.metaDescription && `META: ${data.webData.metaDescription}`,
-    data.webData.homepageText && `HOMEPAGE: ${data.webData.homepageText.slice(0, 1500)}`,
-    data.webData.aboutText && `ABOUT: ${data.webData.aboutText.slice(0, 1000)}`,
+    data.website.metaDescription && `META DESCRIPTION: ${data.website.metaDescription}`,
+    data.website.homepage && `HOMEPAGE TEXT:\n${data.website.homepage.slice(0, 1500)}`,
+    data.website.about && `ABOUT PAGE:\n${data.website.about.slice(0, 1000)}`,
+    data.website.pricing && `PRICING PAGE:\n${data.website.pricing.slice(0, 500)}`,
+    data.website.customers && `CUSTOMERS PAGE:\n${data.website.customers.slice(0, 500)}`,
+    data.website.contact && `CONTACT PAGE:\n${data.website.contact.slice(0, 500)}`,
+    data.website.hqAddress && `ADDRESS FOUND ON WEBSITE: ${data.website.hqAddress}`,
+    data.website.socialLinks.linkedin && `LINKEDIN URL (from website): ${data.website.socialLinks.linkedin}`,
+    data.website.socialLinks.github && `GITHUB URL (from website): ${data.website.socialLinks.github}`,
+    data.website.socialLinks.twitter && `TWITTER (from website): ${data.website.socialLinks.twitter}`,
   ].filter(Boolean).join('\n\n')
 
-  const prompt = `Extract ONLY confirmed facts from these sources. Use "Unknown" if not found. No inference.
+  // GitHub context
+  const githubContext = data.github.found ? `
+GITHUB ORG (${data.github.orgName}):
+- Description: ${data.github.description}
+- Location: ${data.github.location}
+- Public repos: ${data.github.publicRepos}
+- Top languages: ${data.github.topLanguages.join(', ')}
+- Recent activity: ${data.github.recentActivity}
+` : 'GitHub: not found'
+
+  const prompt = `Extract ONLY confirmed facts from the company's OWN WEBSITE. Do not use LinkedIn as a source.
+Use "Unknown" if not found on website or Crunchbase. No guessing.
 
 Company: "${data.companyName}"
-Domain: ${data.resolvedDomain}
-Website fetched: ${data.webData.fetchSuccess ? 'YES' : 'NO'}
+Website domain: ${data.domain}
+Pages fetched: ${data.website.fetchedPages.join(', ') || 'none'}
 
-${websiteContext || 'Website not accessible'}
+WEBSITE CONTENT (PRIMARY SOURCE):
+${websiteContext || 'Website could not be fetched'}
 
-CRUNCHBASE: ${data.crunchbaseSnippet || 'No data'}
-LINKEDIN: ${data.linkedinCompanyUrl || 'not found'}
+${githubContext}
+
+CRUNCHBASE DATA:
+${data.crunchbaseSnippet || 'No Crunchbase data'}
 
 FUNDING NEWS:
 ${data.fundingNews.slice(0,4).map(n => `- ${n.title} | ${n.date} | ${n.url}`).join('\n') || 'No funding news'}
 
-Return ONLY JSON:
+Extract into JSON. For hq: use the ADDRESS FOUND ON WEBSITE if available, otherwise infer from contact/about page text:
 {
-  "name": "exact company name",
-  "domain": "${data.resolvedDomain}",
-  "website": "https://${data.resolvedDomain}",
-  "industry": "industry",
-  "category": "specific e.g. AI CRM, Revenue Intelligence, DevTools",
-  "hq": "city, country or Unknown",
-  "founded": "year or Unknown",
-  "employee_count": "number/range or Unknown",
+  "name": "exact company name from website",
+  "domain": "${data.domain}",
+  "website": "https://${data.domain}",
+  "industry": "from website content",
+  "category": "specific product category from website e.g. AI CRM, DevTools, RevOps",
+  "hq": "full address or city+country from website — NOT from LinkedIn",
+  "founded": "year from about page or Unknown",
+  "employee_count": "number/range from website/about page or Unknown",
   "stage": "Seed|Series A|Series B|Series C|Growth|Public|Unknown",
-  "total_funding": "e.g. $141M or Unknown",
-  "latest_round": "e.g. Series B $52M August 2025 or Unknown",
-  "investors": "key investor names or Unknown",
-  "description": "2 sentences from the actual website text about what they do and who they serve",
-  "linkedin_url": "${data.linkedinCompanyUrl || ''}",
+  "total_funding": "from Crunchbase/news or Unknown",
+  "latest_round": "round + amount + date from Crunchbase/news or Unknown",
+  "investors": "investor names from Crunchbase/news or Unknown",
+  "description": "2 sentences written from the actual homepage/about text — what they do and who they serve",
+  "website_url": "https://${data.domain}",
+  "linkedin_url": "${data.website.socialLinks.linkedin || ''}",
+  "github_url": "${data.website.socialLinks.github || ''}",
   "crunchbase_url": "${data.crunchbaseUrl || ''}",
-  "icp": "who they sell to based on website",
+  "icp": "who they sell to — from customers page or homepage messaging",
   "business_model": "SaaS|Usage-based|Enterprise|Freemium|Unknown",
-  "key_features": ["feature1", "feature2", "feature3"],
+  "key_features": ["real features from website"],
+  "tech_built_with": ${JSON.stringify(data.github.topLanguages)},
   "priority_score": 7
 }`
 
-  const raw = await callAI(prompt, 900)
+  const raw = await callAI(prompt, 1000)
   return parseJSON(raw, {
-    name: data.companyName, domain: data.resolvedDomain,
-    website: `https://${data.resolvedDomain}`,
-    industry: 'Unknown', category: 'Unknown', hq: 'Unknown',
+    name: data.companyName, domain: data.domain,
+    website: `https://${data.domain}`, website_url: `https://${data.domain}`,
+    industry: 'Unknown', category: 'Unknown',
+    hq: data.github.location || 'Unknown',
     founded: 'Unknown', employee_count: 'Unknown', stage: 'Unknown',
     total_funding: 'Unknown', latest_round: 'Unknown', investors: 'Unknown',
-    description: '', linkedin_url: data.linkedinCompanyUrl || '',
+    description: data.website.metaDescription || '',
+    linkedin_url: data.website.socialLinks.linkedin || '',
+    github_url: data.website.socialLinks.github || '',
     crunchbase_url: data.crunchbaseUrl || '',
-    icp: 'Unknown', business_model: 'Unknown', key_features: [], priority_score: 5,
+    icp: 'Unknown', business_model: 'Unknown',
+    key_features: [], tech_built_with: data.github.topLanguages, priority_score: 5,
   })
 }
 
@@ -305,27 +334,39 @@ async function findContacts(
 
   const companyName = snapshot.name as string
 
+  // Search for team members from company website and press coverage — no LinkedIn scraping
   const [r1, r2] = await Promise.all([
     fetch(SERPER_API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-API-KEY': key },
-      body: JSON.stringify({ q: `site:linkedin.com/in "${companyName}" VP OR Head OR Director OR CRO OR CMO OR Chief`, num: 5 }),
+      body: JSON.stringify({ q: `"${companyName}" CEO CTO founder VP director site:${snapshot.domain as string || ''}`, num: 5 }),
     }).then(r => r.json()).then(d => d.organic || []).catch(() => []),
     fetch(SERPER_API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-API-KEY': key },
-      body: JSON.stringify({ q: `"${companyName}" executive leadership team site:linkedin.com 2025`, num: 4 }),
+      body: JSON.stringify({ q: `"${companyName}" leadership team "head of" OR "VP of" OR "director of" 2025`, num: 5 }),
     }).then(r => r.json()).then(d => d.organic || []).catch(() => []),
   ])
 
+  // Extract names from search results — no LinkedIn dependency
   const found = [...r1, ...r2]
-    .filter((r: {link: string}) => r.link?.includes('linkedin.com/in/') && !r.link.includes('/in/search'))
-    .map((r: {title: string; link: string}) => ({
-      name: r.title?.split(' - ')[0]?.replace(' | LinkedIn','')?.trim() || '',
-      title: r.title?.split(' - ')[1]?.trim() || '',
-      url: r.link,
-    }))
-    .filter(p => p.name.length > 2 && p.name.length < 50)
+    .filter((r: {link: string}) => {
+      const domain = r.link?.toLowerCase() || ''
+      // Accept company website, tech press, Crunchbase — NOT LinkedIn profiles
+      return !domain.includes('linkedin.com/in/') &&
+             !domain.includes('twitter.com') &&
+             !domain.includes('facebook.com')
+    })
+    .map((r: {title: string; snippet: string; link: string}) => {
+      // Try to extract a person name from title/snippet
+      const nameMatch = r.snippet?.match(/([A-Z][a-z]+ [A-Z][a-z]+),?\s+(CEO|CTO|CPO|CRO|CMO|VP|Head|Director|Co-founder|Founder)/i)
+      if (nameMatch) {
+        return { name: nameMatch[1], title: nameMatch[2], url: r.link }
+      }
+      return null
+    })
+    .filter(Boolean)
+    .filter((p): p is {name: string; title: string; url: string} => !!p && p.name.length > 2 && p.name.length < 50)
     .slice(0, 6)
 
   if (!found.length) return []
@@ -357,18 +398,11 @@ Return ONLY JSON array:
   const raw = await callAI(prompt, 800)
   const enriched = parseJSON<Array<Record<string, string>>>(raw, [])
 
-  return Promise.all(enriched.slice(0,6).map(async (c, i) => {
-    const fp = found[i]
-    if (fp?.url?.includes('linkedin.com/in/')) {
-      const slug = fp.url.split('linkedin.com/in/')[1]?.split('/')[0]?.split('?')[0]?.toLowerCase() || ''
-      const parts = c.name.toLowerCase().split(' ')
-      const score = (slug.includes(parts[0]?.slice(0,4) || '') ? 35 : 0) +
-                    (slug.includes(parts[parts.length-1]?.slice(0,4) || '') ? 35 : 0)
-      if (score >= 70) return { ...c, linkedin_url: fp.url.split('?')[0], linkedin_verified: true }
-      if (score >= 35) return { ...c, linkedin_url: fp.url.split('?')[0], linkedin_verified: false }
-    }
-    const { url, verified } = await validateLinkedIn(c.name, companyName, c.title)
-    return { ...c, linkedin_url: url, linkedin_verified: verified }
+  // Return contacts without LinkedIn dependency
+  return enriched.slice(0,6).map(c => ({
+    ...c,
+    linkedin_url: null,
+    linkedin_verified: false,
   }))
 }
 

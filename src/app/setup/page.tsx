@@ -154,10 +154,17 @@ export default function SetupPage() {
         {/* Header */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-2 mb-4">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: '#6c63ff' }}>
-              <span className="text-white text-sm font-bold">G</span>
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect width="32" height="32" rx="8" fill="#6c63ff"/>
+              <path d="M8 16C8 11.582 11.582 8 16 8C20.418 8 24 11.582 24 16" stroke="white" strokeWidth="2.5" strokeLinecap="round"/>
+              <path d="M16 16L21 11" stroke="white" strokeWidth="2.5" strokeLinecap="round"/>
+              <circle cx="16" cy="16" r="2.5" fill="white"/>
+              <path d="M8 16C8 20.418 11.582 24 16 24C20.418 24 24 20.418 24 16" stroke="rgba(255,255,255,0.35)" strokeWidth="2.5" strokeLinecap="round"/>
+            </svg>
+            <div>
+              <p className="font-bold text-white leading-none" style={{fontSize:'16px',letterSpacing:'-0.3px'}}>GTM Intelligence</p>
+              <p className="text-xs leading-none mt-0.5" style={{color:'rgba(255,255,255,0.45)',fontSize:'10px',letterSpacing:'0.08em'}}>POWERED BY AI</p>
             </div>
-            <span className="font-bold text-xl text-white">GTM Intel</span>
           </div>
           <h1 className="text-3xl font-bold text-white mb-2">Set up your workspace</h1>
           <p className="text-sm" style={{ color: '#6b6b80' }}>

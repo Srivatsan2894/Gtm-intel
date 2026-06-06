@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'GTM Intel — Sales Intelligence Platform',
+  title: 'GTM Intelligence — Sales Intelligence Platform',
   description: 'AI-powered prospect research, contact discovery, and daily signal alerts for B2B sales teams',
 }
 
