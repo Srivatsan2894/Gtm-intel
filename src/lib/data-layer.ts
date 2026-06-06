@@ -181,17 +181,43 @@ function categorize(name: string): string {
   return 'Other'
 }
 
-async function getOpenExplorerStack(domain: string): Promise<{tools: TechTool[]; byCategory: Record<string, string[]>}> {
-  try {
-    const res = await fetch(`https://openexplorer.tech/api/search?domain=${domain}`, {
-      headers: { 'Accept': 'application/json', 'User-Agent': 'GTMIntel/1.0' },
-      signal: AbortSignal.timeout(8000),
-    })
-    if (!res.ok) return { tools: [], byCategory: {} }
-    const data = await res.json()
+// OpenExplorer public anon key (from their API docs)
+const OPEN_EXPLORER_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNhdG5hdHJ6cGpxY3dxbnBwZ2tmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA3ODE2MTEsImV4cCI6MjA2NjM1NzYxMX0.RO4IJkuMNuLoE70UC2-b1JoGH2eXsFkED7HFpOlMofs'
 
-    const technologies: Array<{name?: string; technology?: string; category?: string}> =
-      data.technologies || data.data || data.results || []
+async function getOpenExplorerStack(domain: string): Promise<{tools: TechTool[]; byCategory: Record<string, string[]>}> {
+  const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]
+
+  try {
+    // Official endpoint: GET /api/website/{domain}
+    const res = await fetch(`https://openexplorer.tech/api/website/${cleanDomain}`, {
+      headers: {
+        'Authorization': `Bearer ${OPEN_EXPLORER_KEY}`,
+        'Accept': 'application/json',
+      },
+      signal: AbortSignal.timeout(10000),
+    })
+
+    if (!res.ok) {
+      console.log(`OpenExplorer ${res.status} for ${cleanDomain}`)
+      return { tools: [], byCategory: {} }
+    }
+
+    const data = await res.json()
+    console.log(`OpenExplorer response for ${cleanDomain}:`, JSON.stringify(data).slice(0, 300))
+
+    // Handle response shape
+    let technologies: Array<Record<string, unknown>> = []
+    if (Array.isArray(data)) {
+      technologies = data
+    } else if (Array.isArray(data.technologies)) {
+      technologies = data.technologies
+    } else if (data.data && Array.isArray(data.data)) {
+      technologies = data.data
+    } else if (data.techStack) {
+      technologies = Array.isArray(data.techStack) ? data.techStack : []
+    } else if (data.tools) {
+      technologies = Array.isArray(data.tools) ? data.tools : []
+    }
 
     if (!technologies.length) return { tools: [], byCategory: {} }
 
@@ -199,10 +225,13 @@ async function getOpenExplorerStack(domain: string): Promise<{tools: TechTool[];
     const byCategory: Record<string, string[]> = {}
 
     for (const t of technologies) {
-      const name = t.name || t.technology || ''
+      const name = (t.name || t.technology || t.tool || t.title || '') as string
       if (!name || name.length < 2) continue
-      const cat = t.category || categorize(name)
-      if (cat === 'Other') continue // skip noise
+      const rawCat = (t.category || t.type || t.group || '') as string
+      const cat = rawCat
+        ? rawCat.charAt(0).toUpperCase() + rawCat.slice(1)
+        : categorize(name)
+      if (cat === 'Other') continue
 
       tools.push({ name, category: cat, verified: true, source: 'OpenExplorer' })
       if (!byCategory[cat]) byCategory[cat] = []
@@ -210,7 +239,8 @@ async function getOpenExplorerStack(domain: string): Promise<{tools: TechTool[];
     }
 
     return { tools, byCategory }
-  } catch {
+  } catch (e) {
+    console.error('OpenExplorer error:', e)
     return { tools: [], byCategory: {} }
   }
 }
