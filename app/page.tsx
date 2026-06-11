@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from "react";
 
-// ---------- design tokens ----------
 const T = {
   bg: "#0E1420", panel: "#151D2E", panelEdge: "#243044", ink: "#EDF1F7",
   dim: "#8B96A8", amber: "#F5A524", amberSoft: "rgba(245,165,36,0.12)",
@@ -14,10 +13,11 @@ const T = {
 
 const STAGES = [
   "Researching the target account…",
-  "Reading their priorities and pressures…",
-  "Scanning the market for live signals…",
+  "Detecting their tech stack…",
+  "Scanning news sources for live signals…",
   "Translating signals into your pitch angles…",
   "Writing plays for SDR, AE and CSM…",
+  "Compiling the executive brief…",
 ];
 
 const roleColor = (r: string) => (r === "SDR" ? T.amber : r === "AE" ? "#7DC4F7" : T.green);
@@ -37,12 +37,12 @@ function CopyBtn({ getText, label = "COPY" }: { getText: () => string; label?: s
   );
 }
 
-function SourceLink({ url }: { url?: string | null }) {
+function SourceLink({ url, name }: { url?: string | null; name?: string | null }) {
   if (!url) return null;
   return (
     <a href={url} target="_blank" rel="noreferrer"
       style={{ fontFamily: T.mono, fontSize: 10.5, color: T.dim, marginLeft: 8, textDecoration: "underline" }}>
-      source ↗
+      via {name || "source"} ↗
     </a>
   );
 }
@@ -57,13 +57,15 @@ function Panel({ kicker, title, children }: { kicker: string; title: string; chi
   );
 }
 
-function List({ label, items }: { label: string; items?: { text: string; sourceUrl?: string | null }[] }) {
+function List({ label, items }: { label: string; items?: { text: string; sourceUrl?: string | null; sourceName?: string | null; sourceDate?: string | null }[] }) {
   return (
     <div style={{ marginBottom: 12 }}>
       <div style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.dim, margin: "0 0 6px" }}>{label}</div>
       {(items || []).map((it, i) => (
         <div key={i} style={{ color: T.ink, fontSize: 13.5, lineHeight: 1.7, padding: "3px 0", borderBottom: `1px solid ${T.panelEdge}` }}>
-          {it.text}<SourceLink url={it.sourceUrl} />
+          {it.text}
+          {it.sourceDate && <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.amber, marginLeft: 8 }}>{it.sourceDate}</span>}
+          <SourceLink url={it.sourceUrl} name={it.sourceName} />
         </div>
       ))}
     </div>
@@ -123,8 +125,9 @@ export default function Home() {
           Paste your target&apos;s URL.<br />Get the signals — and the pitch.
         </h1>
         <p style={{ color: T.dim, fontSize: 14.5, lineHeight: 1.6, margin: "0 0 28px", maxWidth: 600 }}>
-          Live web research, not a database. The engine profiles your target account, hunts verifiable market
-          signals, and translates each one into a pitch angle — with plays for SDR, AE and CSM.
+          Live research from real news sources — every signal dated and linked to where it was found. The engine
+          profiles your target, detects their tech stack, and translates market moves into pitch angles with
+          plays for SDR, AE and CSM.
         </p>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
@@ -155,6 +158,24 @@ export default function Home() {
           <div style={{ color: T.red, fontFamily: T.mono, fontSize: 13, border: `1px solid ${T.red}`, borderRadius: 10, padding: "14px 16px", marginBottom: 14 }}>{error}</div>
         )}
 
+        {data?.summary?.tldr?.length > 0 && (
+          <Panel kicker="⚡ EXECUTIVE BRIEF" title="The 15-second version">
+            {data.summary.tldr.map((l: string, i: number) => (
+              <div key={i} style={{ color: T.ink, fontSize: 14, lineHeight: 1.8 }}>· {l}</div>
+            ))}
+            <div style={{ color: T.amber, fontSize: 13.5, marginTop: 10, fontFamily: T.mono }}>→ {data.summary.topAction}</div>
+          </Panel>
+        )}
+
+        {data?.techStack?.length > 0 && (
+          <div style={{ margin: "0 0 14px" }}>
+            <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.dim, marginRight: 10 }}>DETECTED ON THEIR SITE:</span>
+            {data.techStack.map((t: string, i: number) => (
+              <span key={i} style={{ fontFamily: T.mono, fontSize: 11, color: T.amber, background: T.amberSoft, border: `1px solid ${T.panelEdge}`, borderRadius: 5, padding: "3px 9px", marginRight: 6, display: "inline-block", marginBottom: 6 }}>{t}</span>
+            ))}
+          </div>
+        )}
+
         {data?.profile && (
           <Panel kicker="01 / TARGET PROFILE" title={data.profile.company?.name || ""}>
             <div style={{ color: T.dim, fontSize: 14, margin: "-8px 0 14px" }}>{data.profile.company?.oneLiner}</div>
@@ -170,8 +191,8 @@ export default function Home() {
               <div key={i} style={{ padding: "14px 0", borderTop: `1px solid ${T.panelEdge}` }}>
                 <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
                   <span style={{ fontFamily: T.mono, fontSize: 11, color: T.amber, background: T.amberSoft, borderRadius: 5, padding: "2px 8px" }}>{s.type}</span>
-                  <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.dim }}>{s.date}</span>
-                  <SourceLink url={s.sourceUrl} />
+                  <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.amber }}>{s.sourceDate || s.date}</span>
+                  <SourceLink url={s.sourceUrl} name={s.sourceName} />
                 </div>
                 <div style={{ color: T.ink, fontSize: 14, fontWeight: 600, margin: "7px 0 6px" }}>{s.headline}</div>
                 <div style={{ color: T.ink, fontSize: 13, lineHeight: 1.6, marginBottom: 4 }}>
@@ -194,8 +215,7 @@ export default function Home() {
                   <span style={{ color: T.dim, fontSize: 12.5, fontFamily: T.mono }}>→ {p.who}</span>
                 </div>
                 <div style={{ color: T.dim, fontSize: 12.5, margin: "8px 0 4px" }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.amber }}>HOOK · </span>{p.hook}
-                </div>
+                  <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.amber }}>HOOK · </span>{p.hook}</div>
                 <div style={{ borderLeft: `2px solid ${roleColor(p.role)}`, paddingLeft: 12, margin: "8px 0 2px", color: T.ink, fontSize: 13.5, lineHeight: 1.65, fontStyle: "italic" }}>{p.message}</div>
                 <div style={{ marginTop: 8 }}><CopyBtn label="COPY MESSAGE" getText={() => p.message} /></div>
               </div>
@@ -208,7 +228,7 @@ export default function Home() {
 
         {!data && !loading && !error && (
           <div style={{ color: T.dim, fontFamily: T.mono, fontSize: 12, textAlign: "center", padding: "40px 16px", border: `1px dashed ${T.panelEdge}`, borderRadius: 12, lineHeight: 2 }}>
-            Paste your target&apos;s URL + what you sell — get their pressures, the signals, and your pitch angles by role
+            Paste your target&apos;s URL + what you sell — get their pressures, tech stack, dated signals with sources, and pitch angles by role
           </div>
         )}
       </div>
