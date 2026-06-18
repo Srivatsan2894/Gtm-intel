@@ -139,6 +139,12 @@ const HONESTY = `GROUNDING RULES (non-negotiable):
 - If the evidence doesn't support an item, omit the item. Fewer verified items beats padding.
 - Respond with valid JSON only. No markdown, no preamble.`;
 
+const HONESTY_SYNTHESIS = `GROUNDING RULES (non-negotiable):
+- Build the synthesis ONLY from the verified items provided. Never introduce a company, person, number, date or event that isn't in them.
+- You may connect and interpret the verified items, but every claim must trace back to one of them.
+- If the verified picture is thin, write a shorter, honest synthesis. Never pad with filler like "the market is growing" or "AI is transforming the industry".
+- Respond with valid JSON only. No markdown.`;
+
 // ------------------------------------------------------- target-mode flow ----
 
 async function runTargetMode(url: string, selling: string) {
@@ -222,18 +228,35 @@ Return JSON, strings under 22 words:
  {"role":"CSM","who":"the champion persona (target is already a customer)","hook":"the risk or expansion trigger","message":"2-line proactive check-in referencing the signal"}]}`
   );
 
-  // ---- Stage 4: executive brief --------------------------------------------
+  // ---- Stage 4: synthesis — a cohesive "why now" narrative + the brief ------
+  // Reads ACROSS the already-verified Stage 1-2 outputs. Adds NO new facts,
+  // so the trust model holds — every claim traces to a sourced item below.
+  const verified = {
+    oneLiner: t1.company?.oneLiner || "",
+    priorities: (t1.priorities || []).map((p: any) => p.text),
+    recentMoves: (t1.recentMoves || []).map((p: any) => p.text),
+    pressures: (t1.pressures || []).map((p: any) => p.text),
+    signals: (t2.scoops || []).map((s: any) => ({
+      headline: s.headline, meansForThem: s.meansForTarget, yourAngle: s.yourAngle,
+    })),
+  };
+
   const t4 = await llmJSON(
-    `You are a sales coach. Write a 15-second executive brief. Respond with valid JSON only.`,
-    `Target: ${t1.company?.name}. Seller's product: ${selling || "a B2B product"}.
-Signals: ${(t2.scoops || []).map((s: any) => s.headline).join("; ") || "none"}.
+    `You are a GTM strategist writing the synthesis a seller reads right before they walk into the account. ${HONESTY_SYNTHESIS}`,
+    `Seller's product: ${selling || "a B2B product"}. Target: ${t1.company?.name}.
 Detected stack: ${techStack.join(", ") || "unknown"}.
-Priorities: ${(t1.priorities || []).map((p: any) => p.text).join("; ")}.
-Return {"tldr":["3 punchy lines: the situation, the opening, the risk to avoid"],"topAction":"the single best next step today, under 20 words"}`
+
+VERIFIED PICTURE (use only this):
+${JSON.stringify(verified, null, 2)}
+
+Return JSON:
+{"narrative":"3-5 sentences of plain prose that connect the dots ACROSS all the verified items: what this company is focused on now, the live signal that makes this the moment, the pressure it creates inside them, and where ${selling || "the product"} fits. Read across everything — never just restate one item. No bullets, no headers. Sharp and conversational.",
+ "tldr":["3 short lines: the situation, the opening, the risk to avoid"],
+ "topAction":"the single best next step today, under 20 words"}`
   );
 
   return {
-    summary: { tldr: t4.tldr || [], topAction: t4.topAction || "" },
+    summary: { narrative: t4.narrative || "", tldr: t4.tldr || [], topAction: t4.topAction || "" },
     techStack,
     profile: {
       company: t1.company,
