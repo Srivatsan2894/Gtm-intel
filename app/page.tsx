@@ -158,10 +158,15 @@ export default function Home() {
           <div style={{ color: T.red, fontFamily: T.mono, fontSize: 13, border: `1px solid ${T.red}`, borderRadius: 10, padding: "14px 16px", marginBottom: 14 }}>{error}</div>
         )}
 
-        {data?.summary?.tldr?.length > 0 && (
+        {(data?.summary?.narrative || data?.summary?.tldr?.length > 0) && (
           <Panel kicker="⚡ EXECUTIVE BRIEF" title="The 15-second version">
-            {data.summary.tldr.map((l: string, i: number) => (
-              <div key={i} style={{ color: T.ink, fontSize: 14, lineHeight: 1.8 }}>· {l}</div>
+            {data.summary.narrative && (
+              <div style={{ color: T.ink, fontSize: 15, lineHeight: 1.7, marginBottom: 14 }}>
+                {data.summary.narrative}
+              </div>
+            )}
+            {data.summary.tldr?.map((l: string, i: number) => (
+              <div key={i} style={{ color: T.dim, fontSize: 13.5, lineHeight: 1.8 }}>· {l}</div>
             ))}
             <div style={{ color: T.amber, fontSize: 13.5, marginTop: 10, fontFamily: T.mono }}>→ {data.summary.topAction}</div>
           </Panel>
