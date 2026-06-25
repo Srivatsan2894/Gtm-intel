@@ -157,7 +157,10 @@ async function runTargetMode(url: string, selling: string) {
     Promise.all([
       serper(`${name} company what they do products`, 4),
       serper(`${name} strategy priorities 2026`, 4, { recency: "qdr:m3", endpoint: "news" }),
-      serper(`${name} announcement launch`, 4, { recency: "qdr:m2", endpoint: "news" }),
+      serper(`${name} announcement launch news`, 4, { recency: "qdr:m2", endpoint: "news" }),
+      serper(`${name} funding raised investment round valuation`, 3, { recency: "qdr:m6", endpoint: "news" }),
+      serper(`${name} new hire executive CRO CMO CPO leadership change`, 3, { recency: "qdr:m3", endpoint: "news" }),
+      serper(`${name} partnership integration deal announcement`, 3, { recency: "qdr:m3", endpoint: "news" }),
     ]).then((r) => r.flat()),
   ]);
   const ev1 = evidenceBlock(diversify(s1raw));
@@ -180,10 +183,11 @@ Max 3 priorities, 3 moves, 2 pressures. evidenceId is REQUIRED for every item.`
   // ---- Stage 2: pressure signals → insight → angle -------------------------
   const pressureTerms = (t1.pressures || []).map((p: any) => p.text).join(" ");
   const s2raw = (await Promise.all([
-    serper(`${name} competitors`, 5, { recency: "qdr:m2", endpoint: "news" }),
-    serper(`${pressureTerms || name + " market"}`, 5, { recency: "qdr:m2", endpoint: "news" }),
-    serper(`${name} hiring leadership`, 4, { recency: "qdr:m2" }),
-    serper(`${name} reviews G2 alternatives`, 3),
+    serper(`${name} competitors market`, 5, { recency: "qdr:m2", endpoint: "news" }),
+    serper(`${pressureTerms || name + " market trends"}`, 5, { recency: "qdr:m2", endpoint: "news" }),
+    serper(`${name} hiring jobs engineering sales marketing`, 4, { recency: "qdr:m2" }),
+    serper(`${name} reviews G2 alternatives complaints`, 3),
+    serper(`${name} product launch feature release update`, 4, { recency: "qdr:m3", endpoint: "news" }),
   ])).flat();
   const ev2 = evidenceBlock(diversify(s2raw));
 
@@ -202,11 +206,11 @@ EVIDENCE:
 ${ev2.text}
 
 For each relevant event build the insight chain. Return JSON, strings under 20 words:
-{"scoops":[{"date":"copy from evidence","type":"COMPETITOR|MARKET|THEIR MOVE","headline":"the event",
+{"scoops":[{"date":"copy from evidence","type":"COMPETITOR|MARKET|THEIR MOVE|FUNDING|LEADERSHIP|PRODUCT|PARTNERSHIP|HIRING","headline":"the event",
  "meansForTarget":"the pressure or priority this creates inside ${t1.company?.name}",
  "yourAngle":"how the user pitches ${selling || "their product"} using this",
  "evidenceId":""}]}
-Max 4 scoops. evidenceId is REQUIRED. Skip events with no plausible link to the user's product.`
+Max 6 scoops. evidenceId is REQUIRED. Cover a variety of signal types — don't cluster all scoops on the same category. Skip events with no plausible link to the user's product.`
   );
 
   // ---- Stage 3: plays by role (locked to verified signals, no new facts) ---
@@ -242,21 +246,46 @@ Return JSON, strings under 22 words:
   };
 
   const t4 = await llmJSON(
-    `You are a GTM strategist writing the synthesis a seller reads right before they walk into the account. ${HONESTY_SYNTHESIS}`,
-    `Seller's product: ${selling || "a B2B product"}. Target: ${t1.company?.name}.
-Detected stack: ${techStack.join(", ") || "unknown"}.
+    `You are a senior GTM strategist writing a comprehensive sales briefing document. ${HONESTY_SYNTHESIS}
 
-VERIFIED PICTURE (use only this):
+This brief is read by the ENTIRE sales team — SDRs, AEs, CSMs, and managers — before engaging the account. Requirements:
+- Grounded ONLY in the verified signals provided. No invented facts.
+- Narrative enough to brief a room, specific enough to run a call
+- Every talking point references a real, verified signal from the picture below
+- Watch-outs are specific risks for THIS account, not generic sales advice
+- Signal feed items must cover DIFFERENT types (don't cluster on one category)`,
+    `Seller's product: ${selling || "a B2B product"}. Target: ${t1.company?.name}.
+Detected tech stack on their site: ${techStack.join(", ") || "unknown"}.
+
+VERIFIED PICTURE (build the entire brief from this only):
 ${JSON.stringify(verified, null, 2)}
 
 Return JSON:
-{"narrative":"3-5 sentences of plain prose that connect the dots ACROSS all the verified items: what this company is focused on now, the live signal that makes this the moment, the pressure it creates inside them, and where ${selling || "the product"} fits. Read across everything — never just restate one item. No bullets, no headers. Sharp and conversational.",
- "tldr":["3 short lines: the situation, the opening, the risk to avoid"],
- "topAction":"the single best next step today, under 20 words"}`
+{"situation":"3-4 sentences: what ${t1.company?.name} does, their current strategic focus, their market position, and what pressures or opportunities are driving their decisions right now. Concrete and specific — no filler.",
+ "whyNow":"2-3 sentences: the specific verified signals creating urgency or an opening — reference actual events and timelines and what they trigger internally. This is the core of the pitch.",
+ "signalFeed":[
+   {"type":"FUNDING|LEADERSHIP|PRODUCT|MARKET|COMPETITIVE|HIRING|PARTNERSHIP",
+    "headline":"the signal in one punchy line",
+    "implication":"what this creates inside ${t1.company?.name} — a budget shift, a priority change, a gap, or a pressure",
+    "angle":"the exact conversation hook — how to reference this specific signal when reaching out or on the first call"}
+ ],
+ "approach":"2-3 sentences: recommended approach — which persona to engage first, what business problem to lead with, and what proof points to bring to the first meeting",
+ "talkingPoints":["a specific, signal-grounded talking point — conversational tone, references a real verified event, under 25 words"],
+ "watchOuts":["a specific risk, likely objection, or account-specific blocker to prepare for — under 18 words"],
+ "topAction":"the single most important next step today — specific and actionable, under 20 words"}
+Max 5 signalFeed items (mix types), 4 talkingPoints, 3 watchOuts.`
   );
 
   return {
-    summary: { narrative: t4.narrative || "", tldr: t4.tldr || [], topAction: t4.topAction || "" },
+    brief: {
+      situation: t4.situation || "",
+      whyNow: t4.whyNow || "",
+      signalFeed: t4.signalFeed || [],
+      approach: t4.approach || "",
+      talkingPoints: t4.talkingPoints || [],
+      watchOuts: t4.watchOuts || [],
+      topAction: t4.topAction || "",
+    },
     techStack,
     profile: {
       company: t1.company,
@@ -339,18 +368,31 @@ Max 4 comparison rows, 4 objections, 3 landmines. evidenceId REQUIRED for object
   const ev3 = evidenceBlock(diversify(s3raw));
 
   const t3 = await llmJSON(
-    `You are closing out a competitive battlecard. ${HONESTY_SYNTHESIS}`,
+    `You are writing a comprehensive competitive briefing for a sales team. ${HONESTY_SYNTHESIS}
+
+Requirements:
+- Grounded only in the verified inputs and evidence provided
+- Narrative must be sharp enough to read in 30 seconds before a call
+- Kill shot must be highly specific to ${compNameFull}'s actual weakness — not generic advice
+- Team brief gives each role a concrete, different instruction`,
     `Competitor: ${compNameFull}. Seller's product: ${productLabel}.
 Their positioning: ${t1.competitor?.positioning}.
-Their key weaknesses: ${(t1.weaknesses || []).map((w: any) => w.text).slice(0, 2).join("; ")}.
-Key objection handles: ${(t2.objections || []).map((o: any) => o.handle).slice(0, 2).join("; ")}.
+Key weaknesses: ${(t1.weaknesses || []).map((w: any) => w.text).slice(0, 3).join("; ")}.
+Objection handles available: ${(t2.objections || []).map((o: any) => o.handle).slice(0, 2).join("; ")}.
+Discovery landmines: ${(t2.landmines || []).map((l: any) => l.question).join("; ")}.
 
-EVIDENCE for proof points:
+EVIDENCE:
 ${ev3.text}
 
 Return JSON:
 {"proofPoints":[{"claim":"specific, credible proof point or win pattern, max 16 words","evidenceId":""}],
- "narrative":"3-4 sentences for the seller to read before the call: how ${compNameFull} positions, their real weakness, the killer question to ask, and the close. Sharp and direct — no filler."}`
+ "narrative":"3-4 sentences: how ${compNameFull} positions in the market, their actual structural weakness, and the opening this creates. Sharp and direct.",
+ "killShot":"one sentence — the single most effective competitive move specific to ${compNameFull}'s known weakness. This is what the rep says when the prospect names ${compNameFull} as the frontrunner.",
+ "teamBrief":{
+   "sdr":"2 sentences: how SDRs handle ${compNameFull} when prospects mention them in prospecting — what to say, what to plant as a question",
+   "ae":"2 sentences: how AEs position and close against ${compNameFull} in active evaluations — what to emphasize, what proof to bring",
+   "csm":"2 sentences: how CSMs protect existing accounts from ${compNameFull} encroachment — what risk to surface, what expansion lever to use"
+ }}`
   );
 
   return {
@@ -362,6 +404,8 @@ Return JSON:
     landmines: t2.landmines || [],
     proofPoints: attachUrls(t3.proofPoints || [], ev3.ids),
     narrative: t3.narrative || "",
+    killShot: t3.killShot || "",
+    teamBrief: t3.teamBrief || {},
   };
 }
 

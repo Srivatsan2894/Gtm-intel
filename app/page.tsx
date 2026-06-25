@@ -5,7 +5,11 @@ import { useState, useEffect, useRef } from "react";
 const T = {
   bg: "#0E1420", panel: "#151D2E", panelEdge: "#243044", ink: "#EDF1F7",
   dim: "#8B96A8", amber: "#F5A524", amberSoft: "rgba(245,165,36,0.12)",
-  green: "#4ADE80", red: "#F87171", blue: "#7DC4F7",
+  green: "#4ADE80", greenSoft: "rgba(74,222,128,0.10)",
+  red: "#F87171", redSoft: "rgba(248,113,113,0.10)",
+  blue: "#7DC4F7", blueSoft: "rgba(125,196,247,0.10)",
+  purple: "#A78BFA", purpleSoft: "rgba(167,139,250,0.10)",
+  orange: "#FB923C", orangeSoft: "rgba(251,146,60,0.10)",
   mono: "'IBM Plex Mono', ui-monospace, Menlo, monospace",
   display: "'Space Grotesk', system-ui, sans-serif",
   body: "'Inter', system-ui, -apple-system, sans-serif",
@@ -13,11 +17,11 @@ const T = {
 
 const INTEL_STAGES = [
   "Researching the target account…",
-  "Detecting their tech stack…",
-  "Scanning news sources for live signals…",
-  "Translating signals into your pitch angles…",
+  "Scanning for funding and leadership signals…",
+  "Mining news, reviews and product signals…",
+  "Translating signals into pitch angles…",
   "Writing plays for SDR, AE and CSM…",
-  "Compiling the executive brief…",
+  "Writing the AI sales brief…",
 ];
 
 const BC_STAGES = [
@@ -26,8 +30,22 @@ const BC_STAGES = [
   "Building head-to-head comparison…",
   "Writing objection handles…",
   "Planting discovery landmines…",
-  "Compiling the battlecard…",
+  "Writing the competitive team brief…",
 ];
+
+const SIGNAL_TYPE_META: Record<string, { color: string; soft: string; label: string }> = {
+  FUNDING:     { color: T.blue,   soft: T.blueSoft,   label: "FUNDING"     },
+  LEADERSHIP:  { color: T.purple, soft: T.purpleSoft, label: "LEADERSHIP"  },
+  PRODUCT:     { color: T.green,  soft: T.greenSoft,  label: "PRODUCT"     },
+  MARKET:      { color: T.dim,    soft: "rgba(139,150,168,0.10)", label: "MARKET" },
+  COMPETITIVE: { color: T.red,    soft: T.redSoft,    label: "COMPETITIVE" },
+  HIRING:      { color: T.amber,  soft: T.amberSoft,  label: "HIRING"      },
+  PARTNERSHIP: { color: T.orange, soft: T.orangeSoft, label: "PARTNERSHIP" },
+  "THEIR MOVE":{ color: T.amber,  soft: T.amberSoft,  label: "THEIR MOVE"  },
+};
+
+const signalMeta = (type: string) =>
+  SIGNAL_TYPE_META[type?.toUpperCase()] ?? { color: T.dim, soft: "rgba(139,150,168,0.10)", label: type || "SIGNAL" };
 
 const roleColor = (r: string) => (r === "SDR" ? T.amber : r === "AE" ? T.blue : T.green);
 
@@ -56,11 +74,19 @@ function SourceLink({ url, name }: { url?: string | null; name?: string | null }
   );
 }
 
-function Panel({ kicker, title, children }: { kicker: string; title: string; children: React.ReactNode }) {
+function Panel({ kicker, title, children, accentColor }: { kicker: string; title: string; children: React.ReactNode; accentColor?: string }) {
   return (
     <div style={{ background: T.panel, border: `1px solid ${T.panelEdge}`, borderRadius: 12, padding: "20px 22px", marginBottom: 14 }}>
-      <div style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1.5, color: T.amber, marginBottom: 4 }}>{kicker}</div>
+      <div style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1.5, color: accentColor || T.amber, marginBottom: 4 }}>{kicker}</div>
       <div style={{ fontFamily: T.display, fontSize: 17, fontWeight: 600, color: T.ink, marginBottom: 12 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function SectionLabel({ children, color }: { children: React.ReactNode; color?: string }) {
+  return (
+    <div style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1.5, color: color || T.dim, marginBottom: 8 }}>
       {children}
     </div>
   );
@@ -69,7 +95,7 @@ function Panel({ kicker, title, children }: { kicker: string; title: string; chi
 function List({ label, items }: { label: string; items?: { text: string; sourceUrl?: string | null; sourceName?: string | null; sourceDate?: string | null }[] }) {
   return (
     <div style={{ marginBottom: 12 }}>
-      <div style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.dim, margin: "0 0 6px" }}>{label}</div>
+      <SectionLabel>{label}</SectionLabel>
       {(items || []).map((it, i) => (
         <div key={i} style={{ color: T.ink, fontSize: 13.5, lineHeight: 1.7, padding: "3px 0", borderBottom: `1px solid ${T.panelEdge}` }}>
           {it.text}
@@ -77,6 +103,116 @@ function List({ label, items }: { label: string; items?: { text: string; sourceU
           <SourceLink url={it.sourceUrl} name={it.sourceName} />
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── AI Sales Brief panels ──────────────────────────────────────────────────
+
+function SignalCard({ signal }: { signal: any }) {
+  const meta = signalMeta(signal.type);
+  return (
+    <div style={{ background: meta.soft, border: `1px solid ${meta.color}22`, borderRadius: 10, padding: "14px 16px", marginBottom: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: meta.color, background: `${meta.color}22`, border: `1px solid ${meta.color}44`, borderRadius: 4, padding: "2px 8px" }}>
+          {meta.label}
+        </span>
+        <span style={{ color: T.ink, fontSize: 13.5, fontWeight: 600, lineHeight: 1.4 }}>{signal.headline}</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div>
+          <div style={{ fontFamily: T.mono, fontSize: 9.5, letterSpacing: 1, color: T.dim, marginBottom: 4 }}>MEANS FOR THEM</div>
+          <div style={{ color: T.ink, fontSize: 12.5, lineHeight: 1.6 }}>{signal.implication}</div>
+        </div>
+        <div>
+          <div style={{ fontFamily: T.mono, fontSize: 9.5, letterSpacing: 1, color: meta.color, marginBottom: 4 }}>YOUR ANGLE</div>
+          <div style={{ color: T.ink, fontSize: 12.5, lineHeight: 1.6 }}>{signal.angle}</div>
+          <div style={{ marginTop: 6 }}><CopyBtn label="COPY ANGLE" getText={() => signal.angle} /></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SalesBrief({ brief, companyName }: { brief: any; companyName?: string }) {
+  return (
+    <div style={{ background: T.panel, border: `1px solid ${T.panelEdge}`, borderRadius: 12, padding: "22px 24px", marginBottom: 14 }}>
+      <div style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1.5, color: T.amber, marginBottom: 4 }}>⚡ AI SALES BRIEF</div>
+      <div style={{ fontFamily: T.display, fontSize: 17, fontWeight: 600, color: T.ink, marginBottom: 20 }}>
+        Full team briefing — {companyName || "target account"}
+      </div>
+
+      {/* Situation */}
+      {brief.situation && (
+        <div style={{ marginBottom: 20 }}>
+          <SectionLabel>SITUATION</SectionLabel>
+          <div style={{ color: T.ink, fontSize: 14.5, lineHeight: 1.75 }}>{brief.situation}</div>
+        </div>
+      )}
+
+      {/* Why Now — highlighted */}
+      {brief.whyNow && (
+        <div style={{ background: T.amberSoft, border: `1px solid rgba(245,165,36,0.25)`, borderLeft: `3px solid ${T.amber}`, borderRadius: 8, padding: "14px 16px", marginBottom: 20 }}>
+          <SectionLabel color={T.amber}>WHY NOW — THE TRIGGER</SectionLabel>
+          <div style={{ color: T.ink, fontSize: 14, lineHeight: 1.75 }}>{brief.whyNow}</div>
+        </div>
+      )}
+
+      {/* Signal Feed */}
+      {brief.signalFeed?.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <SectionLabel>LIVE SIGNAL FEED</SectionLabel>
+          {brief.signalFeed.map((s: any, i: number) => <SignalCard key={i} signal={s} />)}
+        </div>
+      )}
+
+      {/* Recommended Approach */}
+      {brief.approach && (
+        <div style={{ marginBottom: 20 }}>
+          <SectionLabel>RECOMMENDED APPROACH</SectionLabel>
+          <div style={{ color: T.ink, fontSize: 14, lineHeight: 1.75 }}>{brief.approach}</div>
+        </div>
+      )}
+
+      {/* Talking Points + Watch Outs */}
+      {(brief.talkingPoints?.length > 0 || brief.watchOuts?.length > 0) && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
+          {brief.talkingPoints?.length > 0 && (
+            <div>
+              <SectionLabel color={T.green}>TALKING POINTS</SectionLabel>
+              {brief.talkingPoints.map((tp: string, i: number) => (
+                <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "6px 0", borderBottom: `1px solid ${T.panelEdge}` }}>
+                  <span style={{ color: T.green, flexShrink: 0, marginTop: 3, fontSize: 11 }}>→</span>
+                  <div style={{ flex: 1 }}>
+                    <span style={{ color: T.ink, fontSize: 13, lineHeight: 1.6 }}>{tp}</span>
+                    <div style={{ marginTop: 4 }}><CopyBtn getText={() => tp} /></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {brief.watchOuts?.length > 0 && (
+            <div>
+              <SectionLabel color={T.red}>WATCH OUTS</SectionLabel>
+              {brief.watchOuts.map((wo: string, i: number) => (
+                <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "6px 0", borderBottom: `1px solid ${T.panelEdge}` }}>
+                  <span style={{ color: T.red, flexShrink: 0, marginTop: 3, fontSize: 11 }}>⚠</span>
+                  <span style={{ color: T.ink, fontSize: 13, lineHeight: 1.6 }}>{wo}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Top Action CTA */}
+      {brief.topAction && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, background: T.amber, borderRadius: 8, padding: "12px 16px" }}>
+          <span style={{ fontFamily: T.mono, fontSize: 11, letterSpacing: 1, color: "#10151F", fontWeight: 600 }}>NEXT ACTION</span>
+          <span style={{ color: "#10151F", fontSize: 14, fontWeight: 600, flex: 1 }}>→ {brief.topAction}</span>
+          <CopyBtn getText={() => brief.topAction} label="COPY" />
+        </div>
+      )}
     </div>
   );
 }
@@ -157,7 +293,7 @@ export default function Home() {
         @keyframes pulse { 0%,100%{opacity:.35} 50%{opacity:1} }
       `}</style>
 
-      <div style={{ maxWidth: 780, margin: "0 auto", padding: "56px 20px 0" }}>
+      <div style={{ maxWidth: 820, margin: "0 auto", padding: "56px 20px 0" }}>
         <div style={{ fontFamily: T.mono, fontSize: 11, letterSpacing: 2, color: T.amber, marginBottom: 10 }}>
           WHY NOW · THE GTM SEARCH ENGINE
         </div>
@@ -166,13 +302,13 @@ export default function Home() {
             ? <> Paste your target&apos;s URL.<br />Get the signals — and the pitch.</>
             : <>Name your competitor.<br />Get a battlecard in 60 seconds.</>}
         </h1>
-        <p style={{ color: T.dim, fontSize: 14.5, lineHeight: 1.6, margin: "0 0 24px", maxWidth: 600 }}>
+        <p style={{ color: T.dim, fontSize: 14.5, lineHeight: 1.6, margin: "0 0 24px", maxWidth: 620 }}>
           {activeMode === "intel"
-            ? "Live research from real news sources — every signal dated and linked. The engine profiles your target, detects their tech stack, and translates market moves into pitch angles with plays for SDR, AE and CSM."
-            : "Live research on your competitor — real weaknesses from actual reviews, objection handles grounded in evidence, discovery landmines, and a win narrative built for your next call."}
+            ? "Live research across funding, leadership, product and competitive signals — every insight consolidated into an AI brief your whole sales team can act on."
+            : "Live research on your competitor — real weaknesses from actual reviews, objection handles grounded in evidence, discovery landmines, and a role-by-role team brief."}
         </p>
 
-        {/* Mode toggle tabs */}
+        {/* Mode toggle */}
         <div style={{ display: "flex", gap: 4, marginBottom: 24, background: T.panel, border: `1px solid ${T.panelEdge}`, borderRadius: 10, padding: 4, width: "fit-content" }}>
           {(["intel", "battlecard"] as const).map((m) => (
             <button key={m} onClick={() => switchMode(m)}
@@ -246,20 +382,12 @@ export default function Home() {
 
         {/* ══════════ ACCOUNT INTEL RESULTS ══════════ */}
 
-        {(data?.summary?.narrative || data?.summary?.tldr?.length > 0) && (
-          <Panel kicker="⚡ EXECUTIVE BRIEF" title="The 15-second version">
-            {data.summary.narrative && (
-              <div style={{ color: T.ink, fontSize: 15, lineHeight: 1.7, marginBottom: 14 }}>
-                {data.summary.narrative}
-              </div>
-            )}
-            {data.summary.tldr?.map((l: string, i: number) => (
-              <div key={i} style={{ color: T.dim, fontSize: 13.5, lineHeight: 1.8 }}>· {l}</div>
-            ))}
-            <div style={{ color: T.amber, fontSize: 13.5, marginTop: 10, fontFamily: T.mono }}>→ {data.summary.topAction}</div>
-          </Panel>
+        {/* AI Sales Brief — top of results */}
+        {data?.brief && (
+          <SalesBrief brief={data.brief} companyName={data.profile?.company?.name} />
         )}
 
+        {/* Tech stack */}
         {data?.techStack?.length > 0 && (
           <div style={{ margin: "0 0 14px" }}>
             <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.dim, marginRight: 10 }}>DETECTED ON THEIR SITE:</span>
@@ -269,6 +397,7 @@ export default function Home() {
           </div>
         )}
 
+        {/* Target profile */}
         {data?.profile && (
           <Panel kicker="01 / TARGET PROFILE" title={data.profile.company?.name || ""}>
             <div style={{ color: T.dim, fontSize: 14, margin: "-8px 0 14px" }}>{data.profile.company?.oneLiner}</div>
@@ -278,27 +407,32 @@ export default function Home() {
           </Panel>
         )}
 
+        {/* Signal feed (sourced) */}
         {data?.scoops?.length > 0 && (
-          <Panel kicker="02 / SIGNAL → INSIGHT → ANGLE" title="Market intel, translated into your pitch">
-            {data.scoops.map((s: any, i: number) => (
-              <div key={i} style={{ padding: "14px 0", borderTop: `1px solid ${T.panelEdge}` }}>
-                <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.amber, background: T.amberSoft, borderRadius: 5, padding: "2px 8px" }}>{s.type}</span>
-                  <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.amber }}>{s.sourceDate || s.date}</span>
-                  <SourceLink url={s.sourceUrl} name={s.sourceName} />
+          <Panel kicker="02 / SIGNALS → INSIGHT → ANGLE" title="Market intel, translated into your pitch">
+            {data.scoops.map((s: any, i: number) => {
+              const meta = signalMeta(s.type);
+              return (
+                <div key={i} style={{ padding: "14px 0", borderTop: `1px solid ${T.panelEdge}` }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+                    <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: meta.color, background: meta.soft, border: `1px solid ${meta.color}33`, borderRadius: 5, padding: "2px 8px" }}>{meta.label}</span>
+                    {(s.sourceDate || s.date) && <span style={{ fontFamily: T.mono, fontSize: 11, color: T.dim }}>{s.sourceDate || s.date}</span>}
+                    <SourceLink url={s.sourceUrl} name={s.sourceName} />
+                  </div>
+                  <div style={{ color: T.ink, fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{s.headline}</div>
+                  <div style={{ color: T.ink, fontSize: 13, lineHeight: 1.6, marginBottom: 4 }}>
+                    <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.dim }}>MEANS FOR THEM · </span>{s.meansForTarget}
+                  </div>
+                  <div style={{ color: meta.color, fontSize: 13, lineHeight: 1.6 }}>
+                    <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1 }}>YOUR ANGLE · </span>{s.yourAngle}
+                  </div>
                 </div>
-                <div style={{ color: T.ink, fontSize: 14, fontWeight: 600, margin: "7px 0 6px" }}>{s.headline}</div>
-                <div style={{ color: T.ink, fontSize: 13, lineHeight: 1.6, marginBottom: 4 }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.dim }}>MEANS FOR THEM · </span>{s.meansForTarget}
-                </div>
-                <div style={{ color: T.amber, fontSize: 13, lineHeight: 1.6 }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1 }}>YOUR ANGLE · </span>{s.yourAngle}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </Panel>
         )}
 
+        {/* Plays by role */}
         {data?.plays?.length > 0 && (
           <Panel kicker="03 / PLAYS BY ROLE" title="Who says what — SDR, AE, CSM">
             {data.plays.map((p: any, i: number) => (
@@ -322,18 +456,48 @@ export default function Home() {
 
         {/* ══════════ BATTLECARD RESULTS ══════════ */}
 
+        {/* Win Brief */}
         {bcData?.narrative && (
           <Panel kicker="⚔ WIN BRIEF" title={`How to beat ${bcData.competitor?.name || "them"}`}>
-            <div style={{ color: T.ink, fontSize: 15, lineHeight: 1.8 }}>{bcData.narrative}</div>
+            <div style={{ color: T.ink, fontSize: 14.5, lineHeight: 1.8, marginBottom: bcData.killShot ? 16 : 0 }}>
+              {bcData.narrative}
+            </div>
+            {bcData.killShot && (
+              <div style={{ background: T.redSoft, border: `1px solid ${T.red}33`, borderLeft: `3px solid ${T.red}`, borderRadius: 8, padding: "12px 14px", marginTop: 4 }}>
+                <div style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.red, marginBottom: 6 }}>KILL SHOT — say this when they name {bcData.competitor?.name} as the frontrunner</div>
+                <div style={{ color: T.ink, fontSize: 14, lineHeight: 1.65, fontStyle: "italic" }}>{bcData.killShot}</div>
+                <div style={{ marginTop: 8 }}><CopyBtn label="COPY KILL SHOT" getText={() => bcData.killShot} /></div>
+              </div>
+            )}
           </Panel>
         )}
 
+        {/* Team Brief — SDR / AE / CSM */}
+        {bcData?.teamBrief && Object.keys(bcData.teamBrief).length > 0 && (
+          <Panel kicker="AI TEAM BRIEF" title="Role-by-role competitive playbook">
+            {[
+              { key: "sdr", label: "SDR", color: T.amber },
+              { key: "ae",  label: "AE",  color: T.blue  },
+              { key: "csm", label: "CSM", color: T.green },
+            ].map(({ key, label, color }) => bcData.teamBrief[key] && (
+              <div key={key} style={{ padding: "14px 0", borderTop: `1px solid ${T.panelEdge}` }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color, border: `1px solid ${color}`, borderRadius: 5, padding: "2px 9px" }}>{label}</span>
+                </div>
+                <div style={{ borderLeft: `2px solid ${color}`, paddingLeft: 12, color: T.ink, fontSize: 13.5, lineHeight: 1.7 }}>
+                  {bcData.teamBrief[key]}
+                </div>
+                <div style={{ marginTop: 8 }}><CopyBtn label={`COPY ${label} BRIEF`} getText={() => bcData.teamBrief[key]} /></div>
+              </div>
+            ))}
+          </Panel>
+        )}
+
+        {/* Competitor profile */}
         {(bcData?.strengths?.length > 0 || bcData?.weaknesses?.length > 0) && (
           <Panel kicker="01 / COMPETITOR PROFILE" title={bcData.competitor?.name || "Competitor"}>
             {bcData.competitor?.tagline && (
-              <div style={{ color: T.dim, fontSize: 13.5, fontStyle: "italic", margin: "-8px 0 4px" }}>
-                {bcData.competitor.tagline}
-              </div>
+              <div style={{ color: T.dim, fontSize: 13.5, fontStyle: "italic", margin: "-8px 0 4px" }}>{bcData.competitor.tagline}</div>
             )}
             <div style={{ color: T.dim, fontSize: 12.5, marginBottom: 16 }}>
               <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1 }}>HOW THEY POSITION · </span>
@@ -341,7 +505,7 @@ export default function Home() {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
               <div>
-                <div style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.dim, marginBottom: 10 }}>THEIR STRENGTHS</div>
+                <SectionLabel>THEIR STRENGTHS</SectionLabel>
                 {(bcData.strengths || []).map((s: any, i: number) => (
                   <div key={i} style={{ color: T.ink, fontSize: 13, lineHeight: 1.7, padding: "5px 0", borderBottom: `1px solid ${T.panelEdge}`, display: "flex", gap: 8 }}>
                     <span style={{ color: T.dim, flexShrink: 0, marginTop: 1 }}>△</span>
@@ -350,7 +514,7 @@ export default function Home() {
                 ))}
               </div>
               <div>
-                <div style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.red, marginBottom: 10 }}>THEIR WEAK SPOTS</div>
+                <SectionLabel color={T.red}>THEIR WEAK SPOTS</SectionLabel>
                 {(bcData.weaknesses || []).map((w: any, i: number) => (
                   <div key={i} style={{ color: T.ink, fontSize: 13, lineHeight: 1.7, padding: "5px 0", borderBottom: `1px solid ${T.panelEdge}`, display: "flex", gap: 8 }}>
                     <span style={{ color: T.red, flexShrink: 0, marginTop: 1 }}>✕</span>
@@ -362,6 +526,7 @@ export default function Home() {
           </Panel>
         )}
 
+        {/* Head-to-head */}
         {bcData?.comparison?.length > 0 && (
           <Panel kicker="02 / HEAD-TO-HEAD" title="Where you win">
             <div style={{ border: `1px solid ${T.panelEdge}`, borderRadius: 8, overflow: "hidden" }}>
@@ -381,6 +546,7 @@ export default function Home() {
           </Panel>
         )}
 
+        {/* Objection handles */}
         {bcData?.objections?.length > 0 && (
           <Panel kicker="03 / OBJECTION HANDLES" title="When they say this — you say that">
             {bcData.objections.map((obj: any, i: number) => (
@@ -401,6 +567,7 @@ export default function Home() {
           </Panel>
         )}
 
+        {/* Discovery landmines */}
         {bcData?.landmines?.length > 0 && (
           <Panel kicker="04 / DISCOVERY LANDMINES" title="Questions that expose their gaps">
             {bcData.landmines.map((lm: any, i: number) => (
@@ -408,17 +575,14 @@ export default function Home() {
                 <div style={{ color: T.amber, fontSize: 14, lineHeight: 1.6, marginBottom: 6, fontStyle: "italic" }}>
                   &ldquo;{lm.question}&rdquo;
                 </div>
-                <div style={{ fontFamily: T.mono, fontSize: 11, color: T.dim }}>
-                  REVEALS · {lm.why}
-                </div>
-                <div style={{ marginTop: 8 }}>
-                  <CopyBtn label="COPY QUESTION" getText={() => lm.question} />
-                </div>
+                <div style={{ fontFamily: T.mono, fontSize: 11, color: T.dim }}>REVEALS · {lm.why}</div>
+                <div style={{ marginTop: 8 }}><CopyBtn label="COPY QUESTION" getText={() => lm.question} /></div>
               </div>
             ))}
           </Panel>
         )}
 
+        {/* Proof points */}
         {bcData?.proofPoints?.length > 0 && (
           <Panel kicker="05 / PROOF POINTS" title="Evidence to use in the deal">
             {bcData.proofPoints.map((pp: any, i: number) => (
@@ -437,8 +601,8 @@ export default function Home() {
         {!data && !bcData && !loading && !error && (
           <div style={{ color: T.dim, fontFamily: T.mono, fontSize: 12, textAlign: "center", padding: "40px 16px", border: `1px dashed ${T.panelEdge}`, borderRadius: 12, lineHeight: 2 }}>
             {activeMode === "intel"
-              ? "Paste your target's URL + what you sell — get their pressures, tech stack, dated signals with sources, and pitch angles by role"
-              : "Enter a competitor name or URL — get their weak spots, objection handles, landmines, and a win narrative"}
+              ? "Paste your target's URL + what you sell — get an AI sales brief, live signals across funding / leadership / product, and pitch plays by role"
+              : "Enter a competitor name or URL — get their weak spots, objection handles, landmines, and a role-by-role competitive brief"}
           </div>
         )}
       </div>
