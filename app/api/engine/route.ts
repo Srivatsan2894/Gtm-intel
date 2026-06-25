@@ -269,6 +269,102 @@ Return JSON:
   };
 }
 
+// --------------------------------------------------- battlecard mode flow ----
+
+async function runBattlecardMode(competitor: string, yourProduct: string, selling: string) {
+  const isUrl = competitor.includes(".");
+  const domain = isUrl ? competitor.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0] : "";
+  const compSlug = domain ? domain.split(".")[0] : competitor;
+  const productLabel = yourProduct || selling || "our product";
+
+  // Stage 1: Competitor profile — what they do, strengths, weaknesses
+  const s1raw = (await Promise.all([
+    serper(`${compSlug} company products features overview`, 5),
+    serper(`${compSlug} customer reviews complaints G2 reddit`, 5),
+    serper(`${compSlug} pricing plans`, 3),
+    serper(`${compSlug} weaknesses limitations problems`, 4, { endpoint: "news" }),
+  ])).flat();
+  const ev1 = evidenceBlock(diversify(s1raw));
+
+  const t1 = await llmJSON(
+    `You are a competitive intelligence analyst building a sales battlecard. ${HONESTY}`,
+    `Competitor: ${compSlug}. Seller's product: ${productLabel}.
+
+EVIDENCE:
+${ev1.text}
+
+Return JSON:
+{"competitor":{"name":"full competitor name","tagline":"their actual positioning tagline","positioning":"one sentence — how they position in the market"},
+ "strengths":[{"text":"a genuine strength, max 14 words","evidenceId":""}],
+ "weaknesses":[{"text":"a real weakness or recurring complaint, max 14 words","evidenceId":""}]}
+Max 4 strengths, 4 weaknesses. evidenceId REQUIRED for every item.`
+  );
+
+  // Stage 2: Head-to-head comparison, objection handles, discovery landmines
+  const compNameFull = t1.competitor?.name || compSlug;
+  const s2raw = (await Promise.all([
+    serper(`${compNameFull} vs ${productLabel} comparison`, 5),
+    serper(`why switch from ${compNameFull} alternatives`, 4),
+    serper(`${compNameFull} negative reviews loss`, 4),
+    serper(`${compNameFull} sales objections competitor`, 3),
+  ])).flat();
+  const ev2 = evidenceBlock(diversify(s2raw));
+
+  const t2 = await llmJSON(
+    `You are writing a competitive battlecard for a sales team. ${HONESTY}
+
+QUALITY BAR for objection handles:
+Objection: "Their pricing is cheaper"
+Handle: "G2 reviewers flagged hidden implementation costs that pushed total cost 40% above list price — ask them to model full TCO including setup and support."
+Rules: ground every handle in evidence. Never say "we're better" without proof. Handles should give the rep something to say, not just acknowledge the objection.`,
+    `Competitor: ${compNameFull}. Seller's product: ${productLabel}.
+Competitor strengths: ${(t1.strengths || []).map((s: any) => s.text).join("; ")}.
+Competitor weaknesses: ${(t1.weaknesses || []).map((w: any) => w.text).join("; ")}.
+
+EVIDENCE:
+${ev2.text}
+
+Return JSON:
+{"comparison":[{"category":"comparison dimension e.g. Setup Time","us":"our advantage in max 10 words","them":"competitor position in max 10 words"}],
+ "objections":[{"objection":"a specific objection prospects give when they prefer ${compNameFull}","handle":"1-2 sentence rebuttal grounded in evidence","evidenceId":""}],
+ "landmines":[{"question":"a discovery question that exposes a ${compNameFull} weakness","why":"what this reveals, max 12 words"}]}
+Max 4 comparison rows, 4 objections, 3 landmines. evidenceId REQUIRED for objections.`
+  );
+
+  // Stage 3: Proof points and win narrative
+  const s3raw = (await Promise.all([
+    serper(`${productLabel} vs ${compNameFull} win case study`, 5),
+    serper(`${compNameFull} customers switching leaving alternatives`, 4, { endpoint: "news" }),
+  ])).flat();
+  const ev3 = evidenceBlock(diversify(s3raw));
+
+  const t3 = await llmJSON(
+    `You are closing out a competitive battlecard. ${HONESTY_SYNTHESIS}`,
+    `Competitor: ${compNameFull}. Seller's product: ${productLabel}.
+Their positioning: ${t1.competitor?.positioning}.
+Their key weaknesses: ${(t1.weaknesses || []).map((w: any) => w.text).slice(0, 2).join("; ")}.
+Key objection handles: ${(t2.objections || []).map((o: any) => o.handle).slice(0, 2).join("; ")}.
+
+EVIDENCE for proof points:
+${ev3.text}
+
+Return JSON:
+{"proofPoints":[{"claim":"specific, credible proof point or win pattern, max 16 words","evidenceId":""}],
+ "narrative":"3-4 sentences for the seller to read before the call: how ${compNameFull} positions, their real weakness, the killer question to ask, and the close. Sharp and direct — no filler."}`
+  );
+
+  return {
+    competitor: t1.competitor,
+    strengths: attachUrls(t1.strengths || [], ev1.ids),
+    weaknesses: attachUrls(t1.weaknesses || [], ev1.ids),
+    comparison: t2.comparison || [],
+    objections: attachUrls(t2.objections || [], ev2.ids),
+    landmines: t2.landmines || [],
+    proofPoints: attachUrls(t3.proofPoints || [], ev3.ids),
+    narrative: t3.narrative || "",
+  };
+}
+
 // ----------------------------------------------------------------- route ----
 
 export async function POST(req: Request) {
@@ -279,6 +375,12 @@ export async function POST(req: Request) {
       const url = (body.url || "").trim();
       if (!url) return NextResponse.json({ error: "url required" }, { status: 400 });
       const result = await runTargetMode(url, (body.selling || "").trim());
+      return NextResponse.json(result);
+    }
+    if (mode === "battlecard") {
+      const competitor = (body.competitor || "").trim();
+      if (!competitor) return NextResponse.json({ error: "competitor required" }, { status: 400 });
+      const result = await runBattlecardMode(competitor, (body.yourProduct || "").trim(), (body.selling || "").trim());
       return NextResponse.json(result);
     }
     return NextResponse.json({ error: `mode "${mode}" not implemented yet` }, { status: 400 });

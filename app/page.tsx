@@ -5,13 +5,13 @@ import { useState, useEffect, useRef } from "react";
 const T = {
   bg: "#0E1420", panel: "#151D2E", panelEdge: "#243044", ink: "#EDF1F7",
   dim: "#8B96A8", amber: "#F5A524", amberSoft: "rgba(245,165,36,0.12)",
-  green: "#4ADE80", red: "#F87171",
+  green: "#4ADE80", red: "#F87171", blue: "#7DC4F7",
   mono: "'IBM Plex Mono', ui-monospace, Menlo, monospace",
   display: "'Space Grotesk', system-ui, sans-serif",
   body: "'Inter', system-ui, -apple-system, sans-serif",
 };
 
-const STAGES = [
+const INTEL_STAGES = [
   "Researching the target account…",
   "Detecting their tech stack…",
   "Scanning news sources for live signals…",
@@ -20,7 +20,16 @@ const STAGES = [
   "Compiling the executive brief…",
 ];
 
-const roleColor = (r: string) => (r === "SDR" ? T.amber : r === "AE" ? "#7DC4F7" : T.green);
+const BC_STAGES = [
+  "Profiling the competitor…",
+  "Mining customer reviews and complaints…",
+  "Building head-to-head comparison…",
+  "Writing objection handles…",
+  "Planting discovery landmines…",
+  "Compiling the battlecard…",
+];
+
+const roleColor = (r: string) => (r === "SDR" ? T.amber : r === "AE" ? T.blue : T.green);
 
 function copyText(str: string, cb: () => void) {
   if (navigator.clipboard?.writeText) navigator.clipboard.writeText(str).then(cb);
@@ -73,40 +82,71 @@ function List({ label, items }: { label: string; items?: { text: string; sourceU
 }
 
 export default function Home() {
+  // Account Intel state
   const [url, setUrl] = useState("");
   const [selling, setSelling] = useState("");
+  const [data, setData] = useState<any>(null);
+
+  // Battlecard state
+  const [competitor, setCompetitor] = useState("");
+  const [yourProduct, setYourProduct] = useState("");
+  const [bcSelling, setBcSelling] = useState("");
+  const [bcData, setBcData] = useState<any>(null);
+
+  // Shared state
+  const [activeMode, setActiveMode] = useState<"intel" | "battlecard">("intel");
   const [loading, setLoading] = useState(false);
   const [stage, setStage] = useState(0);
-  const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<any>(null);
+
+  const activeStages = activeMode === "intel" ? INTEL_STAGES : BC_STAGES;
 
   useEffect(() => {
     clearInterval(timer.current);
     if (loading) {
       setStage(0);
-      timer.current = setInterval(() => setStage((s) => Math.min(s + 1, STAGES.length - 1)), 6000);
+      timer.current = setInterval(() => setStage((s) => Math.min(s + 1, activeStages.length - 1)), 6000);
     }
     return () => clearInterval(timer.current);
   }, [loading]);
 
   const run = async () => {
-    if (!url.trim()) return;
-    setLoading(true); setError(null); setData(null);
+    if (activeMode === "intel" && !url.trim()) return;
+    if (activeMode === "battlecard" && !competitor.trim()) return;
+    setLoading(true); setError(null); setData(null); setBcData(null);
     try {
-      const res = await fetch("/api/engine", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "target", url: url.trim(), selling: selling.trim() }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Engine error");
-      setData(json);
+      if (activeMode === "intel") {
+        const res = await fetch("/api/engine", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "target", url: url.trim(), selling: selling.trim() }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || "Engine error");
+        setData(json);
+      } else {
+        const res = await fetch("/api/engine", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "battlecard", competitor: competitor.trim(), yourProduct: yourProduct.trim(), selling: bcSelling.trim() }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || "Engine error");
+        setBcData(json);
+      }
     } catch (e: any) {
       setError(e.message || "Something went wrong. Try again.");
     } finally {
       setLoading(false);
     }
+  };
+
+  const switchMode = (mode: "intel" | "battlecard") => {
+    setActiveMode(mode);
+    setError(null);
+    setData(null);
+    setBcData(null);
   };
 
   return (
@@ -122,31 +162,76 @@ export default function Home() {
           WHY NOW · THE GTM SEARCH ENGINE
         </div>
         <h1 style={{ fontFamily: T.display, fontSize: 34, fontWeight: 700, color: T.ink, margin: "0 0 10px", lineHeight: 1.15 }}>
-          Paste your target&apos;s URL.<br />Get the signals — and the pitch.
+          {activeMode === "intel"
+            ? <> Paste your target&apos;s URL.<br />Get the signals — and the pitch.</>
+            : <>Name your competitor.<br />Get a battlecard in 60 seconds.</>}
         </h1>
-        <p style={{ color: T.dim, fontSize: 14.5, lineHeight: 1.6, margin: "0 0 28px", maxWidth: 600 }}>
-          Live research from real news sources — every signal dated and linked to where it was found. The engine
-          profiles your target, detects their tech stack, and translates market moves into pitch angles with
-          plays for SDR, AE and CSM.
+        <p style={{ color: T.dim, fontSize: 14.5, lineHeight: 1.6, margin: "0 0 24px", maxWidth: 600 }}>
+          {activeMode === "intel"
+            ? "Live research from real news sources — every signal dated and linked. The engine profiles your target, detects their tech stack, and translates market moves into pitch angles with plays for SDR, AE and CSM."
+            : "Live research on your competitor — real weaknesses from actual reviews, objection handles grounded in evidence, discovery landmines, and a win narrative built for your next call."}
         </p>
 
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-          <input value={url} onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !loading && run()}
-            placeholder="paste your TARGET account's URL — e.g. freshworks.com"
-            style={{ flex: "1 1 260px", fontFamily: T.mono, fontSize: 14, color: T.ink, background: T.panel, border: `1px solid ${T.panelEdge}`, borderRadius: 10, padding: "13px 16px", outline: "none" }} />
-          <button onClick={run} disabled={loading}
-            style={{ fontFamily: T.display, fontSize: 14, fontWeight: 600, color: "#10151F", background: loading ? "#9a7833" : T.amber, border: "none", borderRadius: 10, padding: "13px 22px", cursor: loading ? "default" : "pointer" }}>
-            {loading ? "Hunting…" : "Crack this account"}
-          </button>
+        {/* Mode toggle tabs */}
+        <div style={{ display: "flex", gap: 4, marginBottom: 24, background: T.panel, border: `1px solid ${T.panelEdge}`, borderRadius: 10, padding: 4, width: "fit-content" }}>
+          {(["intel", "battlecard"] as const).map((m) => (
+            <button key={m} onClick={() => switchMode(m)}
+              style={{
+                fontFamily: T.mono, fontSize: 11, letterSpacing: 1, padding: "8px 20px", borderRadius: 7, border: "none", cursor: "pointer",
+                background: activeMode === m ? T.amber : "transparent",
+                color: activeMode === m ? "#10151F" : T.dim,
+                fontWeight: activeMode === m ? 600 : 400,
+              }}>
+              {m === "intel" ? "ACCOUNT INTEL" : "⚔ BATTLECARD"}
+            </button>
+          ))}
         </div>
-        <input value={selling} onChange={(e) => setSelling(e.target.value)}
-          placeholder="What do YOU sell? (one line — this powers the pitch angles)"
-          style={{ width: "100%", boxSizing: "border-box", fontFamily: T.body, fontSize: 13, color: T.ink, background: "transparent", border: `1px solid ${T.panelEdge}`, borderRadius: 10, padding: "11px 16px", outline: "none", marginBottom: 28 }} />
 
+        {/* Account Intel form */}
+        {activeMode === "intel" && (
+          <>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+              <input value={url} onChange={(e) => setUrl(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !loading && run()}
+                placeholder="paste your TARGET account's URL — e.g. freshworks.com"
+                style={{ flex: "1 1 260px", fontFamily: T.mono, fontSize: 14, color: T.ink, background: T.panel, border: `1px solid ${T.panelEdge}`, borderRadius: 10, padding: "13px 16px", outline: "none" }} />
+              <button onClick={run} disabled={loading}
+                style={{ fontFamily: T.display, fontSize: 14, fontWeight: 600, color: "#10151F", background: loading ? "#9a7833" : T.amber, border: "none", borderRadius: 10, padding: "13px 22px", cursor: loading ? "default" : "pointer" }}>
+                {loading ? "Hunting…" : "Crack this account"}
+              </button>
+            </div>
+            <input value={selling} onChange={(e) => setSelling(e.target.value)}
+              placeholder="What do YOU sell? (one line — this powers the pitch angles)"
+              style={{ width: "100%", boxSizing: "border-box", fontFamily: T.body, fontSize: 13, color: T.ink, background: "transparent", border: `1px solid ${T.panelEdge}`, borderRadius: 10, padding: "11px 16px", outline: "none", marginBottom: 28 }} />
+          </>
+        )}
+
+        {/* Battlecard form */}
+        {activeMode === "battlecard" && (
+          <>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+              <input value={competitor} onChange={(e) => setCompetitor(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !loading && run()}
+                placeholder="Competitor name or URL — e.g. salesforce.com or HubSpot"
+                style={{ flex: "1 1 260px", fontFamily: T.mono, fontSize: 14, color: T.ink, background: T.panel, border: `1px solid ${T.panelEdge}`, borderRadius: 10, padding: "13px 16px", outline: "none" }} />
+              <button onClick={run} disabled={loading}
+                style={{ fontFamily: T.display, fontSize: 14, fontWeight: 600, color: "#10151F", background: loading ? "#9a7833" : T.amber, border: "none", borderRadius: 10, padding: "13px 22px", cursor: loading ? "default" : "pointer" }}>
+                {loading ? "Building…" : "Build battlecard"}
+              </button>
+            </div>
+            <input value={yourProduct} onChange={(e) => setYourProduct(e.target.value)}
+              placeholder="Your product name — so we frame the comparison around you"
+              style={{ width: "100%", boxSizing: "border-box", fontFamily: T.body, fontSize: 13, color: T.ink, background: "transparent", border: `1px solid ${T.panelEdge}`, borderRadius: 10, padding: "11px 16px", outline: "none", marginBottom: 10 }} />
+            <input value={bcSelling} onChange={(e) => setBcSelling(e.target.value)}
+              placeholder="What do YOU sell? (optional — sharpens objection handles)"
+              style={{ width: "100%", boxSizing: "border-box", fontFamily: T.body, fontSize: 13, color: T.ink, background: "transparent", border: `1px solid ${T.panelEdge}`, borderRadius: 10, padding: "11px 16px", outline: "none", marginBottom: 28 }} />
+          </>
+        )}
+
+        {/* Loading */}
         {loading && (
           <div style={{ background: T.panel, border: `1px solid ${T.panelEdge}`, borderRadius: 12, padding: "18px 22px", marginBottom: 14 }}>
-            {STAGES.slice(0, stage + 1).map((m, i) => (
+            {activeStages.slice(0, stage + 1).map((m, i) => (
               <div key={i} style={{ fontFamily: T.mono, fontSize: 12.5, lineHeight: 2, color: i === stage ? T.amber : T.dim, animation: i === stage ? "pulse 1.4s infinite" : "none" }}>
                 {i < stage ? "✓" : "›"} {m}
               </div>
@@ -154,9 +239,12 @@ export default function Home() {
           </div>
         )}
 
+        {/* Error */}
         {error && (
           <div style={{ color: T.red, fontFamily: T.mono, fontSize: 13, border: `1px solid ${T.red}`, borderRadius: 10, padding: "14px 16px", marginBottom: 14 }}>{error}</div>
         )}
+
+        {/* ══════════ ACCOUNT INTEL RESULTS ══════════ */}
 
         {(data?.summary?.narrative || data?.summary?.tldr?.length > 0) && (
           <Panel kicker="⚡ EXECUTIVE BRIEF" title="The 15-second version">
@@ -220,7 +308,8 @@ export default function Home() {
                   <span style={{ color: T.dim, fontSize: 12.5, fontFamily: T.mono }}>→ {p.who}</span>
                 </div>
                 <div style={{ color: T.dim, fontSize: 12.5, margin: "8px 0 4px" }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.amber }}>HOOK · </span>{p.hook}</div>
+                  <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.amber }}>HOOK · </span>{p.hook}
+                </div>
                 <div style={{ borderLeft: `2px solid ${roleColor(p.role)}`, paddingLeft: 12, margin: "8px 0 2px", color: T.ink, fontSize: 13.5, lineHeight: 1.65, fontStyle: "italic" }}>{p.message}</div>
                 <div style={{ marginTop: 8 }}><CopyBtn label="COPY MESSAGE" getText={() => p.message} /></div>
               </div>
@@ -231,9 +320,125 @@ export default function Home() {
           </Panel>
         )}
 
-        {!data && !loading && !error && (
+        {/* ══════════ BATTLECARD RESULTS ══════════ */}
+
+        {bcData?.narrative && (
+          <Panel kicker="⚔ WIN BRIEF" title={`How to beat ${bcData.competitor?.name || "them"}`}>
+            <div style={{ color: T.ink, fontSize: 15, lineHeight: 1.8 }}>{bcData.narrative}</div>
+          </Panel>
+        )}
+
+        {(bcData?.strengths?.length > 0 || bcData?.weaknesses?.length > 0) && (
+          <Panel kicker="01 / COMPETITOR PROFILE" title={bcData.competitor?.name || "Competitor"}>
+            {bcData.competitor?.tagline && (
+              <div style={{ color: T.dim, fontSize: 13.5, fontStyle: "italic", margin: "-8px 0 4px" }}>
+                {bcData.competitor.tagline}
+              </div>
+            )}
+            <div style={{ color: T.dim, fontSize: 12.5, marginBottom: 16 }}>
+              <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1 }}>HOW THEY POSITION · </span>
+              {bcData.competitor?.positioning}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+              <div>
+                <div style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.dim, marginBottom: 10 }}>THEIR STRENGTHS</div>
+                {(bcData.strengths || []).map((s: any, i: number) => (
+                  <div key={i} style={{ color: T.ink, fontSize: 13, lineHeight: 1.7, padding: "5px 0", borderBottom: `1px solid ${T.panelEdge}`, display: "flex", gap: 8 }}>
+                    <span style={{ color: T.dim, flexShrink: 0, marginTop: 1 }}>△</span>
+                    <span>{s.text}<SourceLink url={s.sourceUrl} name={s.sourceName} /></span>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <div style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.red, marginBottom: 10 }}>THEIR WEAK SPOTS</div>
+                {(bcData.weaknesses || []).map((w: any, i: number) => (
+                  <div key={i} style={{ color: T.ink, fontSize: 13, lineHeight: 1.7, padding: "5px 0", borderBottom: `1px solid ${T.panelEdge}`, display: "flex", gap: 8 }}>
+                    <span style={{ color: T.red, flexShrink: 0, marginTop: 1 }}>✕</span>
+                    <span>{w.text}<SourceLink url={w.sourceUrl} name={w.sourceName} /></span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Panel>
+        )}
+
+        {bcData?.comparison?.length > 0 && (
+          <Panel kicker="02 / HEAD-TO-HEAD" title="Where you win">
+            <div style={{ border: `1px solid ${T.panelEdge}`, borderRadius: 8, overflow: "hidden" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr" }}>
+                <div style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.dim, background: "rgba(255,255,255,0.03)", padding: "9px 14px", borderBottom: `1px solid ${T.panelEdge}` }}>DIMENSION</div>
+                <div style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.green, background: "rgba(255,255,255,0.03)", padding: "9px 14px", borderBottom: `1px solid ${T.panelEdge}`, borderLeft: `1px solid ${T.panelEdge}` }}>US</div>
+                <div style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.red, background: "rgba(255,255,255,0.03)", padding: "9px 14px", borderBottom: `1px solid ${T.panelEdge}`, borderLeft: `1px solid ${T.panelEdge}` }}>THEM</div>
+              </div>
+              {bcData.comparison.map((row: any, i: number) => (
+                <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", borderTop: `1px solid ${T.panelEdge}` }}>
+                  <div style={{ fontFamily: T.mono, fontSize: 11.5, color: T.amber, padding: "11px 14px", lineHeight: 1.5 }}>{row.category}</div>
+                  <div style={{ fontSize: 13, color: T.green, padding: "11px 14px", borderLeft: `1px solid ${T.panelEdge}`, lineHeight: 1.5 }}>{row.us}</div>
+                  <div style={{ fontSize: 13, color: T.dim, padding: "11px 14px", borderLeft: `1px solid ${T.panelEdge}`, lineHeight: 1.5 }}>{row.them}</div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        )}
+
+        {bcData?.objections?.length > 0 && (
+          <Panel kicker="03 / OBJECTION HANDLES" title="When they say this — you say that">
+            {bcData.objections.map((obj: any, i: number) => (
+              <div key={i} style={{ padding: "14px 0", borderTop: i > 0 ? `1px solid ${T.panelEdge}` : "none" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: 1, color: T.red, flexShrink: 0, paddingTop: 3 }}>THEY SAY</span>
+                  <span style={{ color: T.ink, fontSize: 13.5, fontStyle: "italic" }}>&ldquo;{obj.objection}&rdquo;</span>
+                </div>
+                <div style={{ borderLeft: `2px solid ${T.green}`, paddingLeft: 14, color: T.ink, fontSize: 13.5, lineHeight: 1.65 }}>
+                  {obj.handle}
+                </div>
+                <div style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center" }}>
+                  <CopyBtn label="COPY HANDLE" getText={() => obj.handle} />
+                  <SourceLink url={obj.sourceUrl} name={obj.sourceName} />
+                </div>
+              </div>
+            ))}
+          </Panel>
+        )}
+
+        {bcData?.landmines?.length > 0 && (
+          <Panel kicker="04 / DISCOVERY LANDMINES" title="Questions that expose their gaps">
+            {bcData.landmines.map((lm: any, i: number) => (
+              <div key={i} style={{ padding: "12px 0", borderTop: i > 0 ? `1px solid ${T.panelEdge}` : "none" }}>
+                <div style={{ color: T.amber, fontSize: 14, lineHeight: 1.6, marginBottom: 6, fontStyle: "italic" }}>
+                  &ldquo;{lm.question}&rdquo;
+                </div>
+                <div style={{ fontFamily: T.mono, fontSize: 11, color: T.dim }}>
+                  REVEALS · {lm.why}
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  <CopyBtn label="COPY QUESTION" getText={() => lm.question} />
+                </div>
+              </div>
+            ))}
+          </Panel>
+        )}
+
+        {bcData?.proofPoints?.length > 0 && (
+          <Panel kicker="05 / PROOF POINTS" title="Evidence to use in the deal">
+            {bcData.proofPoints.map((pp: any, i: number) => (
+              <div key={i} style={{ color: T.ink, fontSize: 13.5, lineHeight: 1.7, padding: "7px 0", borderBottom: `1px solid ${T.panelEdge}`, display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <span style={{ color: T.green, flexShrink: 0, marginTop: 2 }}>→</span>
+                <span>{pp.claim}<SourceLink url={pp.sourceUrl} name={pp.sourceName} /></span>
+              </div>
+            ))}
+            <div style={{ textAlign: "center", color: T.dim, fontFamily: T.mono, fontSize: 11, letterSpacing: 1, marginTop: 24 }}>
+              BUILT BY SRI · LIVE WEB RESEARCH, NO DATABASE · WANT BATTLECARDS REFRESHED WEEKLY? LET&apos;S TALK
+            </div>
+          </Panel>
+        )}
+
+        {/* Empty state */}
+        {!data && !bcData && !loading && !error && (
           <div style={{ color: T.dim, fontFamily: T.mono, fontSize: 12, textAlign: "center", padding: "40px 16px", border: `1px dashed ${T.panelEdge}`, borderRadius: 12, lineHeight: 2 }}>
-            Paste your target&apos;s URL + what you sell — get their pressures, tech stack, dated signals with sources, and pitch angles by role
+            {activeMode === "intel"
+              ? "Paste your target's URL + what you sell — get their pressures, tech stack, dated signals with sources, and pitch angles by role"
+              : "Enter a competitor name or URL — get their weak spots, objection handles, landmines, and a win narrative"}
           </div>
         )}
       </div>
